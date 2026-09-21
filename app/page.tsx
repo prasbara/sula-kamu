@@ -23,6 +23,7 @@ import { SITE_CONFIG, SEMARANG_INSTITUTIONS, FIXED_INSTITUTION_COUNT } from '@/l
 import LiveStatsBar from '@/components/LiveStatsBar';
 import StrangerCamComingSoon from '@/components/StrangerCamComingSoon';
 import { ReviewService } from '@/src/services/review/reviewService';
+import JsonLd from '@/components/JsonLd';
 
 export default function HomePage() {
   let reviewsData = { reviews: [] as any[], total: 0 };
@@ -60,8 +61,22 @@ export default function HomePage() {
     },
   ];
 
+  const jsonLdFaq = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faqs.map((f) => ({
+      '@type': 'Question',
+      name: f.q,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: f.a,
+      },
+    })),
+  };
+
   return (
     <div className="space-y-24 md:space-y-32 pb-24 overflow-hidden">
+      <JsonLd data={jsonLdFaq} />
       {/* 1. HERO SECTION */}
       <section className="relative pt-12 md:pt-18 pb-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         <div className="text-center max-w-4xl mx-auto space-y-7">

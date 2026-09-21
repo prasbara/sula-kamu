@@ -69,6 +69,13 @@ export default function Navbar() {
               <span className="text-[9px] bg-[#E8B4C8] text-[#17151A] font-bold px-1.5 py-0.2 rounded-full">Rp5k</span>
             </Link>
             <Link
+              href="/stranger-cam"
+              className="px-3 py-2 text-sm font-semibold text-[#8A5A9A] hover:text-[#5B3A6D] hover:bg-[#8A5A9A]/10 rounded-lg transition-colors flex items-center gap-1.5"
+            >
+              <span>Stranger Cam</span>
+              <span className="text-[9px] bg-[#5B3A6D] text-white font-bold px-1.5 py-0.5 rounded-full">Soon</span>
+            </Link>
+            <Link
               href="/blog"
               className="px-3 py-2 text-sm font-medium text-[#68626D] hover:text-[#5B3A6D] hover:bg-[#5B3A6D]/5 rounded-lg transition-colors"
             >
@@ -135,6 +142,14 @@ export default function Navbar() {
             className="block px-3 py-2.5 rounded-lg text-base font-medium text-[#17151A] hover:bg-[#5B3A6D]/10"
           >
             Komunitas Kampus Semarang
+          </Link>
+          <Link
+            href="/stranger-cam"
+            onClick={() => setIsOpen(false)}
+            className="block px-3 py-2.5 rounded-lg text-base font-semibold text-[#8A5A9A] hover:bg-[#5B3A6D]/10 flex items-center justify-between"
+          >
+            <span>📹 Stranger Cam</span>
+            <span className="text-[10px] bg-[#5B3A6D] text-white font-bold px-2 py-0.5 rounded-full">Soon</span>
           </Link>
           <Link
             href="/premium"

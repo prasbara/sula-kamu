@@ -3,17 +3,78 @@ import Link from 'next/link';
 import { GraduationCap, MapPin, Send, ShieldCheck, ArrowRight } from 'lucide-react';
 import { SITE_CONFIG, SEMARANG_INSTITUTIONS } from '@/lib/constants';
 
+import JsonLd from '@/components/JsonLd';
+
 export const metadata: Metadata = {
-  title: 'Komunitas Mahasiswa Semarang — Ekosistem Pendidikan Tinggi & NIVA',
-  description: 'Informasi ekosistem pendidikan tinggi di Semarang: panduan pertemanan mahasiswa lintas kampus (UNDIP, UNNES, UDINUS, UNISSULA, SCU, POLINES, dan lainnya) melalui NIVA.',
+  title: 'Komunitas Mahasiswa Semarang — Ekosistem Kampus (UNDIP, UNNES, UDINUS, UNISSULA) & NIVA',
+  description: 'Direktori & panduan komunitas mahasiswa 33 perguruan tinggi di Semarang: UNDIP Tembalang, UNNES Gunungpati, UDINUS, UNISSULA, POLINES, SCU BSB. Temukan teman & koneksi kampus aman di NIVA.',
+  keywords: [
+    'universitas di Semarang',
+    'kampus di Semarang',
+    'perguruan tinggi Semarang',
+    'UNDIP Semarang',
+    'UNNES Semarang',
+    'UDINUS Semarang',
+    'UNISSULA Semarang',
+    'POLINES Semarang',
+    'UIN Walisongo Semarang',
+    'SCU Soegijapranata Semarang',
+    'USM Semarang',
+    'UNIMUS Semarang',
+    'mahasiswa Tembalang',
+    'mahasiswa Sekaran Gunungpati',
+    'dating app mahasiswa Semarang',
+    'cari kenalan mahasiswa Semarang',
+    'komunitas mahasiswa Semarang',
+  ],
   alternates: {
     canonical: '/students/semarang',
+  },
+  openGraph: {
+    title: 'Komunitas Mahasiswa Semarang — Ekosistem Kampus & NIVA',
+    description: 'Panduan pertemanan dan matchmaking mahasiswa lintas 33 kampus di Kota Semarang.',
+    url: `${SITE_CONFIG.url}/students/semarang`,
+    siteName: 'NIVA',
+    type: 'website',
   },
 };
 
 export default function SemarangStudentsPage() {
+  const jsonLdInstitutions = {
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    name: 'Daftar Perguruan Tinggi & Universitas di Semarang',
+    itemListElement: SEMARANG_INSTITUTIONS.map((inst, index) => ({
+      '@type': 'ListItem',
+      position: index + 1,
+      name: `${inst.fullName} (${inst.shortName})`,
+      description: `Kampus ${inst.type} di kawasan ${inst.area}, Semarang`,
+    })),
+  };
+
+  const jsonLdBreadcrumb = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Beranda NIVA',
+        item: SITE_CONFIG.url,
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Ekosistem Mahasiswa Semarang',
+        item: `${SITE_CONFIG.url}/students/semarang`,
+      },
+    ],
+  };
+
   return (
     <div className="py-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto space-y-16">
+      <JsonLd data={jsonLdInstitutions} />
+      <JsonLd data={jsonLdBreadcrumb} />
       <div className="text-center space-y-4 max-w-3xl mx-auto">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#5B3A6D]/10 text-[#5B3A6D] text-xs font-semibold">
           <GraduationCap className="w-4 h-4" />

@@ -1,9 +1,9 @@
 export const SITE_CONFIG = {
   name: 'NIVA',
-  title: 'NIVA — Student Social & Matchmaking Platform in Semarang',
+  title: 'NIVA — Platform Mahasiswa Semarang | Safe Matchmaking & Stranger Cam',
   tagline: 'Meet someone worth knowing.',
-  descriptor: 'Student Social & Matchmaking Platform',
-  description: 'NIVA helps verified students discover meaningful connections, shared interests, and new conversations across the Semarang campus community. 18+ and privacy-focused.',
+  descriptor: 'Platform Sosial, Safe Matchmaking & Stranger Cam Mahasiswa Semarang',
+  description: 'NIVA adalah platform sosial, safe matchmaking, dan stranger video chat eksklusif untuk mahasiswa perguruan tinggi di Semarang (UNDIP, UNNES, UDINUS, UNISSULA, POLINES, dll). 18+, aman, dan terverifikasi.',
   url: 'https://niva.id',
   telegramBotUrl: process.env.NEXT_PUBLIC_TELEGRAM_BOT_URL || 'https://t.me/nivasocialmakingbot',
   region: 'Semarang, Jawa Tengah, Indonesia',
