@@ -1,5 +1,5 @@
-import { Institution } from '../../types/index.js';
-import { config } from '../../config/index.js';
+import { Institution } from '../../types/index';
+import { config } from '../../config/index';
 
 export interface AiKtmValidationResult {
   isAuthenticKtm: boolean;

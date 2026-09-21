@@ -1,12 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getDatabase } from '../../database/db.js';
-import { config } from '../../config/index.js';
-import { ImageSanitizer } from './imageSanitizer.js';
-import { PhotoModerationService } from '../safety/photoModerationService.js';
-import { ModerationService } from '../safety/moderationService.js';
-import { PhotoVerification } from '../../types/index.js';
+import { getDatabase } from '../../database/db';
+import { config } from '../../config/index';
+import { ImageSanitizer } from './imageSanitizer';
+import { PhotoModerationService } from '../safety/photoModerationService';
+import { ModerationService } from '../safety/moderationService';
+import { PhotoVerification } from '../../types/index';
 
 export class PhotoVerificationService {
   /**

@@ -1,5 +1,5 @@
 import { createWorker } from 'tesseract.js';
-import { Institution } from '../../types/index.js';
+import { Institution } from '../../types/index';
 
 export interface OCRAnalysisResult {
   extractedText: string;

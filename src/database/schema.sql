@@ -243,31 +243,84 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- 18. Support Tickets & Chat Queue
+-- 18. Support Tickets & Chat Queue (FIFO support queue)
 CREATE TABLE IF NOT EXISTS support_tickets (
-    id TEXT PRIMARY KEY,
+    id TEXT PRIMARY KEY, -- e.g. NIVA-PREM-001248
     user_id TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'PREMIUM' CHECK(type IN ('PREMIUM', 'GENERAL', 'VERIFICATION', 'ACCOUNT')),
     subject TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'WAITING' CHECK(status IN ('WAITING', 'IN_PROGRESS', 'RESOLVED', 'CLOSED')),
-    priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK(priority IN ('LOW', 'NORMAL', 'HIGH')),
-    assigned_to TEXT,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN', 'WAITING', 'IN_PROGRESS', 'WAITING_FOR_USER', 'RESOLVED', 'CLOSED')),
+    priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK(priority IN ('LOW', 'NORMAL', 'HIGH', 'URGENT')),
+    assigned_admin_id TEXT,
+    internal_notes TEXT,
+    closed_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- 19. Admin & Staff Roles (RBAC)
+-- 19. Support Messages (Two-way chat between User and Admin)
+CREATE TABLE IF NOT EXISTS support_messages (
+    id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL,
+    sender_type TEXT NOT NULL CHECK(sender_type IN ('USER', 'ADMIN', 'SYSTEM')),
+    sender_id TEXT NOT NULL,
+    sender_name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    is_internal INTEGER NOT NULL DEFAULT 0, -- 1 for internal admin-only notes
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE
+);
+
+-- 20. Single-Use Cryptographic Bridge Tokens (Telegram to Website Auth)
+CREATE TABLE IF NOT EXISTS bridge_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    purpose TEXT NOT NULL DEFAULT 'PREMIUM_SUPPORT',
+    target_ticket_id TEXT,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 21. Admin & Staff Roles (RBAC with MFA / TOTP)
 CREATE TABLE IF NOT EXISTS admin_users (
     id TEXT PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     display_name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('SUPER_ADMIN', 'PAYMENT_ADMIN', 'VERIFICATION_ADMIN', 'MODERATOR', 'SUPPORT_ADMIN', 'AUDITOR', 'VERIFICATION_REVIEWER', 'SUPPORT')),
+    role TEXT NOT NULL CHECK(role IN ('SUPER_ADMIN', 'PAYMENT_ADMIN', 'VERIFICATION_ADMIN', 'MODERATOR', 'SUPPORT_ADMIN', 'AUDITOR')),
+    totp_secret TEXT,
+    totp_enabled INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- 20. Audit Logs
+-- 22. Server-Side Admin Sessions
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    id TEXT PRIMARY KEY,
+    admin_id TEXT NOT NULL,
+    token_hash TEXT UNIQUE NOT NULL,
+    ip_address TEXT,
+    user_agent TEXT,
+    last_active_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    is_revoked INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(admin_id) REFERENCES admin_users(id) ON DELETE CASCADE
+);
+
+-- 23. Brute-Force Protection & Rate Limiting
+CREATE TABLE IF NOT EXISTS login_attempts (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    is_successful INTEGER NOT NULL,
+    attempted_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 24. Audit Logs (Immutable append-only privileged trail)
 CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
     actor_id TEXT NOT NULL,

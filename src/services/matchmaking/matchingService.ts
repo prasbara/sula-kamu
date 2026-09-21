@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
-import { getDatabase } from '../../database/db.js';
-import { config } from '../../config/index.js';
-import { Match, Message, Profile, User } from '../../types/index.js';
+import { getDatabase } from '../../database/db';
+import { config } from '../../config/index';
+import { Match, Message, Profile, User } from '../../types/index';
 
 export interface DiscoveryCard {
   profileId: string;

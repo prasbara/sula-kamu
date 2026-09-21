@@ -5,6 +5,7 @@ import { getDatabase } from '../../database/db';
 import { config } from '../../config/index';
 import { ImageSanitizer } from '../verification/imageSanitizer';
 import { ModerationService } from '../safety/moderationService';
+import { SupportService } from '../support/supportService';
 import { PaymentRequest, SubscriptionPlan } from '../../types/index';
 
 export class PaymentService {
@@ -189,6 +190,17 @@ export class PaymentService {
         });
 
         db.exec('COMMIT;');
+
+        // Section 24: Payment approval Telegram notification with exact backend expiry date
+        const formattedDate = new Date(endsAt).toLocaleDateString('id-ID', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        });
+        SupportService.sendTelegramNotification(
+          payment.user_id,
+          `✅ *Premium kamu sudah aktif sampai ${formattedDate}.*\n\nBatas harian like ditingkatkan menjadi 50 like/hari dengan prioritas rekomendasi.`
+        ).catch(() => {});
       } catch (err) {
         db.exec('ROLLBACK;');
         throw err;
@@ -209,6 +221,12 @@ export class PaymentService {
         targetId: paymentId,
         details: `Rejected payment ${paymentId}. Reason: ${notes}`,
       });
+
+      // Telegram notification for payment rejection
+      SupportService.sendTelegramNotification(
+        payment.user_id,
+        `⚠️ *Verifikasi pembayaran NIVA Premium belum berhasil.*\n\nAlasan: ${notes || 'Bukti transfer tidak valid'}. Silakan periksa kembali melalui menu bantuan website.`
+      ).catch(() => {});
     }
   }
 

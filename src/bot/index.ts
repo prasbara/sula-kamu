@@ -16,6 +16,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { PhotoModerationService } from '../services/safety/photoModerationService.js';
 import { StatisticsService } from '../services/stats/statisticsService.js';
 import { PhotoVerificationService } from '../services/verification/photoVerificationService.js';
+import { SupportService } from '../services/support/supportService.js';
+import { PaymentService } from '../services/payment/paymentService.js';
 
 export interface SessionData {
   step:
@@ -128,6 +130,77 @@ export function createBot(): Bot<MyContext> {
     await ctx.reply(OnboardingHandler.getWelcomeMessage(), {
       parse_mode: 'Markdown',
       reply_markup: OnboardingHandler.getAgeGateKeyboard(),
+    });
+  });
+
+  // /premium command (Sections 10, 11, 12, 13, 30, 33)
+  bot.command('premium', async (ctx) => {
+    const telegramId = ctx.from?.id.toString() || '';
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+    const db = getDatabase();
+
+    if (user.status === 'BANNED') {
+      await ctx.reply('⛔ Akun Anda telah ditangguhkan.');
+      return;
+    }
+
+    // 1. Check account / subscription status
+    const activeSub = db.prepare(`
+      SELECT s.*, sp.name as plan_name 
+      FROM subscriptions s
+      JOIN subscription_plans sp ON sp.id = s.plan_id
+      WHERE s.user_id = ? AND s.status = 'ACTIVE' AND s.ends_at > datetime('now')
+      ORDER BY s.ends_at DESC LIMIT 1
+    `).get(user.id) as { ends_at: string; plan_name: string } | undefined;
+
+    // 2. Dynamic pricing from backend (Section 12: Never hardcode price)
+    const plans = PaymentService.getPlans();
+    let pricingText = '';
+    for (const plan of plans) {
+      const priceFormatted = `Rp${plan.price.toLocaleString('id-ID')}`;
+      const months = Math.round(plan.duration_days / 30) || 1;
+      pricingText += `• *${plan.name}* ${priceFormatted} / ${months} bulan\n`;
+    }
+
+    // 3. Anti-duplicate ticket acquisition (Section 11 & 33)
+    const { ticket } = SupportService.getOrCreatePremiumTicket(user.id);
+    const queuePos = SupportService.getQueuePosition(ticket.id);
+
+    // 4. Secure deep link bridge tokens (Section 13 & 30: single-use, 15 min, no secrets in URL)
+    const supportBridgeToken = SupportService.createBridgeToken(user.id, ticket.id, 'PREMIUM_SUPPORT');
+    const checkoutBridgeToken = SupportService.createBridgeToken(user.id, ticket.id, 'CHECKOUT');
+
+    const appBaseUrl = (config.APP_URL || 'https://niva.id').replace(/\/+$/, '');
+    const chatAdminUrl = `${appBaseUrl}/api/auth/bridge?token=${supportBridgeToken}&dest=support`;
+    const checkoutUrl = `${appBaseUrl}/api/auth/bridge?token=${checkoutBridgeToken}&dest=checkout`;
+
+    let statusHeader = '';
+    if (activeSub) {
+      const expiryFormatted = new Date(activeSub.ends_at).toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      });
+      statusHeader = `⭐ *Status Premium Anda: AKTIF*\n` +
+        `Paket: *${activeSub.plan_name}*\n` +
+        `Berlaku sampai: *${expiryFormatted}*\n` +
+        `Kuota Like: *50 like / hari*\n\n` +
+        `────────────────────\n\n`;
+    }
+
+    const messageText =
+      `${statusHeader}🌟 *NIVA Premium Membership*\n\n` +
+      `${pricingText}\n` +
+      `Pembayaran Premium dilakukan melalui website NIVA. ` +
+      `Admin akan membantu sesuai antrean (Posisi Antrean: #${queuePos || 1}).\n\n` +
+      `🎫 *Nomor Tiket Dukungan:* \`${ticket.id}\`\n\n` +
+      `_Klik tombol di bawah untuk membuka sesi obrolan bantuan atau form pembayaran resmi:_`;
+
+    await ctx.reply(messageText, {
+      parse_mode: 'Markdown',
+      reply_markup: new InlineKeyboard()
+        .url('💬 Chat Admin', chatAdminUrl)
+        .url('💳 Buka Pembayaran', checkoutUrl),
     });
   });
 

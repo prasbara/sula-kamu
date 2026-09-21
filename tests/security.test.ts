@@ -272,6 +272,160 @@ async function runSecurityTests() {
   const promoUserDb = db.prepare('SELECT subscription_status FROM users WHERE id = ?').get(promoUser) as any;
   assert(promoUserDb.subscription_status === 'PREMIUM_ACTIVE', 'Promotional premium grant activates user subscription');
 
+  // ==========================================
+  // SECTION 34: MASTER SECURITY TESTS SUITE
+  // ==========================================
+  console.log('\n--- MASTER SPEC SECTION 34 SECURITY TESTS ---');
+
+  const { AdminAuthService } = await import('../src/services/auth/adminAuthService.js');
+  const { SupportService } = await import('../src/services/support/supportService.js');
+
+  // TEST 15: Generic Error & Brute-Force Rate Limiting (Section 3 & 34)
+  console.log('\n14. Admin Brute-Force Protection & Lockout:');
+  const testAdminUsername = `admin_${uuidv4().slice(0, 6)}`;
+  const testIp = `192.168.200.${Math.floor(Math.random() * 200 + 10)}`;
+  AdminAuthService.createAdminUser({
+    username: testAdminUsername,
+    password: 'SuperSecurePassword2026!',
+    displayName: 'Test Sec Admin',
+    role: 'SUPER_ADMIN',
+  });
+
+  // Attempt 5 failed logins
+  for (let i = 0; i < 5; i++) {
+    let failedGeneric = false;
+    try {
+      await AdminAuthService.login(testAdminUsername, 'WrongPassword123!', undefined, testIp);
+    } catch (e: any) {
+      failedGeneric = e.message.includes('INVALID_CREDENTIALS') || e.message.includes('tidak valid');
+    }
+    assert(failedGeneric, `Failed attempt #${i + 1} rejected with generic message`);
+  }
+
+  // 6th attempt must trigger account lockout
+  let lockedOut = false;
+  try {
+    await AdminAuthService.login(testAdminUsername, 'SuperSecurePassword2026!', '123456', testIp);
+  } catch (e: any) {
+    lockedOut = e.message.includes('TOO_MANY_ATTEMPTS') || e.message.includes('dibatasi') || e.message.includes('dikunci');
+  }
+  assert(lockedOut, 'Account automatically locked out after 5 consecutive failed attempts');
+
+  // TEST 16: Session Validity, Inactivity Timeout, & Revocation (Section 3, 27, 34)
+  console.log('\n15. Admin Session Security & Revocation:');
+  const normalAdminUsername = `active_${uuidv4().slice(0, 6)}`;
+  AdminAuthService.createAdminUser({
+    username: normalAdminUsername,
+    password: 'ValidPassword2026!',
+    displayName: 'Active Admin',
+    role: 'PAYMENT_ADMIN',
+  });
+
+  const loginRes = await AdminAuthService.login(normalAdminUsername, 'ValidPassword2026!', '123456', '127.0.0.1');
+  assert(!!loginRes.token, 'Successful login generates secure session token');
+
+  // Validate active session
+  const validatedSession = AdminAuthService.validateSession(loginRes.token);
+  assert(validatedSession !== null && validatedSession.username === normalAdminUsername, 'Validates active server-side session');
+
+  // Test fake/forged session token rejection
+  const fakeSession = AdminAuthService.validateSession('forged_fake_token_12345678901234567890123456789012');
+  assert(fakeSession === null, 'Rejects forged or non-existent session token');
+
+  // Test session logout / revocation
+  AdminAuthService.revokeSession(loginRes.token);
+  const revokedCheck = AdminAuthService.validateSession(loginRes.token);
+  assert(revokedCheck === null, 'Revoked session cannot be reused (immediate invalidation)');
+
+  // TEST 17: Role-Based Access Control (RBAC) (Section 5, 6, 34)
+  console.log('\n16. Server-Side Role-Based Access Control (RBAC):');
+  assert(AdminAuthService.hasPermission('SUPER_ADMIN', 'manage_users'), 'SUPER_ADMIN has all permissions');
+  assert(AdminAuthService.hasPermission('PAYMENT_ADMIN', 'approve_payments'), 'PAYMENT_ADMIN can approve payments');
+  assert(!AdminAuthService.hasPermission('PAYMENT_ADMIN', 'verify_ktm'), 'PAYMENT_ADMIN DENIED verification rights');
+  assert(AdminAuthService.hasPermission('VERIFICATION_ADMIN', 'verify_ktm'), 'VERIFICATION_ADMIN can verify KTM');
+  assert(!AdminAuthService.hasPermission('VERIFICATION_ADMIN', 'approve_payments'), 'VERIFICATION_ADMIN DENIED payment rights');
+  assert(!AdminAuthService.hasPermission('AUDITOR', 'approve_payments'), 'AUDITOR DENIED mutation rights');
+
+  // TEST 18: Telegram /premium Ticket Creation & Anti-Duplication (Section 10, 11, 33, 34)
+  console.log('\n17. Telegram /premium Ticket Anti-Duplication:');
+  const tgUser = uuidv4();
+  db.prepare("INSERT INTO users (id, telegram_id, status) VALUES (?, ?, 'ACTIVE')").run(tgUser, `tg-${tgUser.slice(0, 8)}`);
+
+  const ticket1 = SupportService.getOrCreatePremiumTicket(tgUser);
+  assert(ticket1.ticket.id.startsWith('NIVA-PREM-') && ticket1.isNew, `Creates new premium support ticket: ${ticket1.ticket.id}`);
+
+  // Re-run /premium for same user
+  const ticket2 = SupportService.getOrCreatePremiumTicket(tgUser);
+  assert(!ticket2.isNew && ticket2.ticket.id === ticket1.ticket.id, 'Reusing existing open ticket on repeated /premium execution (no duplicates)');
+
+  // TEST 19: Cryptographic One-Time Bridge Token & Anti-Replay (Section 13, 30, 34)
+  console.log('\n18. Single-Use Bridge Token & Anti-Replay:');
+  const bridgeToken = SupportService.createBridgeToken(tgUser, ticket1.ticket.id, 'PREMIUM_SUPPORT');
+  assert(typeof bridgeToken === 'string' && bridgeToken.length === 64, 'Generates 64-char cryptographically random bridge token');
+
+  // First exchange (Success)
+  const exchangeResult = await SupportService.exchangeBridgeToken(bridgeToken);
+  assert(exchangeResult.userId === tgUser && exchangeResult.targetTicketId === ticket1.ticket.id, 'First-time exchange succeeds and validates user identity');
+
+  // Replay attempt (Rejection)
+  let replayError = false;
+  try {
+    await SupportService.exchangeBridgeToken(bridgeToken);
+  } catch (e: any) {
+    replayError = e.message.includes('ALREADY_USED') || e.message.includes('REPLAY') || e.message.includes('INVALID');
+  }
+  assert(replayError, 'Token replay rejected: single-use token cannot be redeemed twice');
+
+  // TEST 20: User Support Ticket Isolation (Section 15 & 34)
+  console.log('\n19. User Ticket Access Isolation:');
+  const userA = tgUser;
+  const userB = uuidv4();
+  db.prepare("INSERT INTO users (id, telegram_id, status) VALUES (?, ?, 'ACTIVE')").run(userB, `tg-b-${userB.slice(0, 8)}`);
+  const ticketB = SupportService.getOrCreatePremiumTicket(userB);
+
+  // User A attempts to access User B's ticket
+  let crossAccessDenied = false;
+  try {
+    SupportService.getUserTicketDetails(userA, ticketB.ticket.id);
+  } catch (e: any) {
+    crossAccessDenied = e.message.includes('UNAUTHORIZED') || e.message.includes('ACCESS_DENIED') || e.message.includes('tidak memiliki akses');
+  }
+  assert(crossAccessDenied, 'Cross-user ticket access denied: User A cannot read User B ticket');
+
+  // User A accesses own ticket
+  const userAOwnTicket = SupportService.getUserTicketDetails(userA, ticket1.ticket.id);
+  assert(userAOwnTicket.ticket.id === ticket1.ticket.id, 'User A can securely access their own ticket');
+
+  // TEST 21: Separation of Internal Moderator Notes from Customer Chat (Section 18)
+  console.log('\n20. Internal Moderator Notes Separation:');
+  // Admin posts public reply
+  SupportService.sendMessage(ticket1.ticket.id, 'ADMIN', 'admin-support-1', 'Admin NIVA', 'Halo! Ada yang bisa kami bantu mengenai paket Premium?', false);
+  // Admin posts private internal note
+  SupportService.sendMessage(ticket1.ticket.id, 'ADMIN', 'admin-support-1', 'Admin NIVA', 'Catatan internal: user menanyakan opsi pembayaran via QRIS', true);
+
+  // Customer fetches ticket
+  const customerView = SupportService.getUserTicketDetails(userA, ticket1.ticket.id);
+  assert(customerView.messages.some((m) => m.body.includes('Halo! Ada yang bisa')), 'Customer receives admin public reply');
+  assert(!customerView.messages.some((m) => m.body.includes('Catatan internal')), 'Internal moderator notes are STRICTLY hidden from customer view');
+
+  // Admin fetches ticket
+  const adminView = SupportService.getAdminTicketDetails(ticket1.ticket.id);
+  assert(adminView.messages.some((m) => m.body.includes('Catatan internal')), 'Internal notes remain visible to authorized administrators');
+
+  // TEST 22: Append-Only Immutable Audit Log (Section 29)
+  console.log('\n21. Append-Only Audit Logging:');
+  const auditEntriesBefore = db.prepare('SELECT COUNT(*) as count FROM audit_logs').get() as { count: number };
+  ModerationService.logAudit({
+    actorId: 'admin-auditor-1',
+    actorRole: 'SUPER_ADMIN',
+    action: 'TEST_AUDIT_ACTION',
+    targetResource: 'system_settings',
+    targetId: 'setting-1',
+    details: 'Testing append-only audit trail verification',
+  });
+  const auditEntriesAfter = db.prepare('SELECT COUNT(*) as count FROM audit_logs').get() as { count: number };
+  assert(auditEntriesAfter.count === auditEntriesBefore.count + 1, 'Audit record appended successfully without schema tampering');
+
   console.log(`\n=============================================`);
   console.log(`TEST SUMMARY: ${passed}/${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   console.log(`=============================================\n`);

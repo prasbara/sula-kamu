@@ -1,12 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getDatabase } from '../../database/db.js';
-import { config } from '../../config/index.js';
-import { Institution, StudentVerification, User } from '../../types/index.js';
-import { ImageSanitizer, SanitizedImage } from './imageSanitizer.js';
-import { OCRAnalyzer, OCRAnalysisResult } from './ocrAnalyzer.js';
-import { AiKtmValidator, AiKtmValidationResult } from './aiKtmValidator.js';
+import { getDatabase } from '../../database/db';
+import { config } from '../../config/index';
+import { Institution, StudentVerification, User } from '../../types/index';
+import { ImageSanitizer, SanitizedImage } from './imageSanitizer';
+import { OCRAnalyzer, OCRAnalysisResult } from './ocrAnalyzer';
+import { AiKtmValidator, AiKtmValidationResult } from './aiKtmValidator';
 
 export interface VerificationSubmissionResult {
   success: boolean;
@@ -288,6 +288,65 @@ export class VerificationService {
         internalReason: reasonSummary,
         verificationId,
       };
+    }
+  }
+
+  /**
+   * Get KTM manual review queue (FIFO)
+   */
+  public static getReviewQueue(): any[] {
+    const db = getDatabase();
+    return db.prepare(`
+      SELECT 
+        sv.id,
+        sv.user_id,
+        sv.institution_id,
+        sv.status,
+        sv.ocr_extracted_text,
+        sv.ocr_confidence,
+        sv.review_notes,
+        sv.created_at,
+        i.name as institution_name,
+        i.short_name as institution_short_name,
+        p.display_name,
+        p.study_field
+      FROM student_verifications sv
+      JOIN institutions i ON i.id = sv.institution_id
+      LEFT JOIN profiles p ON p.user_id = sv.user_id
+      WHERE sv.status = 'NEEDS_REVIEW'
+      ORDER BY sv.created_at ASC
+    `).all();
+  }
+
+  /**
+   * Resolve KTM manual review (APPROVE / REJECT)
+   */
+  public static resolveManualReview(
+    verificationId: string,
+    action: 'APPROVE' | 'REJECT',
+    reviewerId: string,
+    reason?: string
+  ): void {
+    const db = getDatabase();
+    const verif = db.prepare('SELECT * FROM student_verifications WHERE id = ?').get(verificationId) as any;
+    if (!verif) throw new Error('VERIFICATION_NOT_FOUND: Verifikasi tidak ditemukan.');
+
+    if (action === 'APPROVE') {
+      db.prepare(`
+        UPDATE student_verifications 
+        SET status = 'VERIFIED', review_notes = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(reason || 'Disetujui manual oleh verifikator', verificationId);
+
+      db.prepare("UPDATE users SET status = 'ACTIVE', verification_status = 'KTM_VERIFIED', updated_at = datetime('now') WHERE id = ?").run(verif.user_id);
+    } else {
+      db.prepare(`
+        UPDATE student_verifications 
+        SET status = 'REJECTED', review_notes = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(reason || 'Ditolak manual oleh verifikator', verificationId);
+
+      db.prepare("UPDATE users SET verification_status = 'VERIFICATION_REJECTED', updated_at = datetime('now') WHERE id = ?").run(verif.user_id);
     }
   }
 }
