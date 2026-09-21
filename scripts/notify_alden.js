@@ -12,36 +12,55 @@ const profile = db.prepare(`
   WHERE p.user_id = ?
 `).get(userId);
 
-const previewText = ProfileHandler.renderProfilePreview(profile, profile.inst_short);
+let interestsArr = [];
+try {
+  interestsArr = typeof profile.interests === 'string' ? JSON.parse(profile.interests) : profile.interests;
+} catch {
+  interestsArr = [];
+}
+const interestsTags = interestsArr.map(i => `#${String(i).replace(/\s+/g, '')}`).join(' ');
 
-const payload = {
-  chat_id: '5764989848',
-  text: `🎉 *Profil Anda Berhasil Disimpan & Diverifikasi!*\n\n${previewText}`,
-  parse_mode: 'Markdown',
-  reply_markup: {
-    inline_keyboard: [
-      [
-        { text: '❤️ Mulai Temukan Teman (Discover)', callback_data: 'cmd_discover' },
-        { text: '💬 Matches Saya', callback_data: 'cmd_matches' }
-      ],
-      [
-        { text: '👤 Profil Saya', callback_data: 'cmd_my_profile' },
-        { text: '🛡 Pusat Keamanan', callback_data: 'cmd_safety' }
-      ],
-      [
-        { text: '⚙ Pengaturan', callback_data: 'cmd_settings' }
-      ]
+// Modern dating app card caption format (as requested in 2nd screenshot)
+const caption = 
+  `*${profile.display_name}*, ${profile.age} • 📍 *${profile.coarse_area || 'Semarang'}*\n` +
+  `🎓 *${profile.inst_short}* — ${profile.study_field} (Terverifikasi 🛡️)\n` +
+  `🎯 *${ProfileHandler.formatIntent(profile.relationship_intent)}*\n\n` +
+  `💬 *"${profile.bio || 'Belum mengisi bio.'}"*\n\n` +
+  `🏷 ${interestsTags}\n\n` +
+  `🔒 _Privasi Aman: NIM, kontak & username tetap dirahasiakan._`;
+
+const keyboard = {
+  inline_keyboard: [
+    [
+      { text: '❤️ Mulai Temukan Teman (Discover)', callback_data: 'cmd_discover' },
+      { text: '💬 Matches Saya', callback_data: 'cmd_matches' }
+    ],
+    [
+      { text: '📸 Ganti Foto', callback_data: 'upload_profile_photo' },
+      { text: '✏️ Edit Bio', callback_data: 'edit_bio' }
+    ],
+    [
+      { text: '🛡 Pusat Keamanan', callback_data: 'cmd_safety' },
+      { text: '⚙ Pengaturan', callback_data: 'cmd_settings' }
     ]
-  }
+  ]
 };
 
-fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(payload)
-})
-.then(r => r.json())
-.then(data => {
-  console.log('Notification sent to Alden:', data.ok ? 'SUCCESS' : data);
-})
-.catch(console.error);
+if (profile.photo_file_id) {
+  fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: '5764989848',
+      photo: profile.photo_file_id,
+      caption: caption,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    console.log('Profile Photo Card sent to Alden:', data.ok ? 'SUCCESS' : data);
+  })
+  .catch(console.error);
+}
