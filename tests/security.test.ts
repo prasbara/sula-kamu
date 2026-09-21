@@ -137,6 +137,8 @@ async function runSecurityTests() {
     name: 'Universitas Islam Sultan Agung',
     short_name: 'UNISSULA',
     email_domain: 'unissula.ac.id',
+    type: 'PTS' as const,
+    campus_cluster: 'Genuk',
     region: 'Semarang',
     is_active: 1,
   };
