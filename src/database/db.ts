@@ -72,14 +72,38 @@ export function initDatabase(customPath?: string): void {
       released_at TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     )`,
+    // Safe chat sessions — new exclusive session model columns
+    "ALTER TABLE safe_chat_sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'SAFE_CHAT_WAITING'",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN user_a_id TEXT",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN user_b_id TEXT",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN user_a_joined_at TEXT",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN user_b_joined_at TEXT",
     "ALTER TABLE safe_chat_sessions ADD COLUMN active_seconds INTEGER DEFAULT 0",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN last_tick_at TEXT",
     "ALTER TABLE safe_chat_sessions ADD COLUMN last_both_active_at TEXT",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN paused_at TEXT",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN ended_at TEXT",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN end_reason TEXT",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN user_a_private_decision TEXT",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN user_b_private_decision TEXT",
+    // User presence — add session_id column
     `CREATE TABLE IF NOT EXISTS user_presence (
       user_id TEXT PRIMARY KEY,
+      session_id TEXT,
       last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
       presence_status TEXT NOT NULL DEFAULT 'ACTIVE',
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
+    "ALTER TABLE user_presence ADD COLUMN session_id TEXT",
+    // Notification events audit log
+    `CREATE TABLE IF NOT EXISTS notification_events (
+      id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      user_id TEXT,
+      status TEXT NOT NULL DEFAULT 'SENT',
+      error_message TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
   ];
 

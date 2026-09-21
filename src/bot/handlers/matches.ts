@@ -37,12 +37,13 @@ export class MatchesHandler {
   public static getChatSafetyKeyboard(
     matchId: string,
     partnerUserId: string,
-    phase: 'SANDBOX' | 'UNLOCKED' | 'TERMINATED' = 'SANDBOX',
-    minutesRemaining: number | null = null
+    status: string = 'SAFE_CHAT_WAITING',
+    remainingSeconds: number | null = null
   ): InlineKeyboard {
     const kb = new InlineKeyboard();
 
-    if (phase === 'TERMINATED') {
+    // Terminal states
+    if (['ENDED_BY_USER', 'ENDED_BY_INACTIVITY', 'BLOCKED', 'REPORTED'].includes(status)) {
       return kb
         .text('🚫 Blokir', `block_user_${partnerUserId}`)
         .text('🚨 Laporkan', `report_${partnerUserId}`)
@@ -52,20 +53,22 @@ export class MatchesHandler {
 
     kb.text('💬 Balas Pesan', `reply_msg_${matchId}`).row();
 
-    if (phase === 'SANDBOX') {
-      const label = minutesRemaining !== null
-        ? `🛡️ Sandbox Aktif (${minutesRemaining} mnt lagi)`
-        : '🛡️ Status Sandbox';
-      kb.text(label, `sandbox_status_${matchId}`).row();
-    } else if (phase === 'UNLOCKED') {
-      // After sandbox: show private contact request button
-      kb.text('🤝 Lanjut Berkenalan (Tukar Kontak)', `req_private_${matchId}_${partnerUserId}`).row();
+    if (['SAFE_CHAT_WAITING', 'SAFE_CHAT_ACTIVE', 'SAFE_CHAT_PAUSED'].includes(status)) {
+      const mins = remainingSeconds !== null ? Math.ceil(remainingSeconds / 60) : '?';
+      kb.text(`🛡️ Sesi Aman Aktif (${mins} mnt lagi)`, `sandbox_status_${matchId}`).row();
+    } else if (status === 'SAFE_CHAT_COMPLETED') {
+      kb.text('✅ Lanjut Privat', `consent_yes_${matchId}`).row();
+      kb.text('❌ Akhiri', `consent_no_${matchId}`).row();
+    } else if (status === 'PRIVATE_CHAT_PENDING') {
+      kb.text('⏳ Menunggu keputusan match...', `sandbox_status_${matchId}`).row();
+    } else if (status === 'PRIVATE_CHAT_ENABLED') {
+      kb.text('🤝 Tukar Kontak Telegram', `req_private_${matchId}_${partnerUserId}`).row();
     }
 
     kb
       .text('🚫 Blokir', `block_user_${partnerUserId}`)
       .text('🚨 Laporkan', `report_${partnerUserId}`)
-      .text('👋 Unmatch', `unmatch_${matchId}`)
+      .text('👋 Akhiri Chat', `end_chat_${matchId}`)
       .row()
       .text('🛡 Tips Keamanan', 'safety_tips_info')
       .text('⬅️ Matches', 'cmd_matches');

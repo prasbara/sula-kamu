@@ -103,7 +103,8 @@ export class MatchingService {
       SELECT uel.session_id
       FROM user_exclusive_locks uel
       JOIN safe_chat_sessions scs ON scs.id = uel.session_id
-      WHERE uel.user_id = ? AND uel.released_at IS NULL AND scs.phase = 'SANDBOX'
+      WHERE uel.user_id = ? AND uel.released_at IS NULL
+        AND scs.status IN ('SAFE_CHAT_WAITING','SAFE_CHAT_ACTIVE','SAFE_CHAT_PAUSED')
     `).get(userId);
 
     if (lock) {
@@ -188,7 +189,8 @@ export class MatchingService {
       SELECT uel.session_id
       FROM user_exclusive_locks uel
       JOIN safe_chat_sessions scs ON scs.id = uel.session_id
-      WHERE uel.user_id = ? AND uel.released_at IS NULL AND scs.phase = 'SANDBOX'
+      WHERE uel.user_id = ? AND uel.released_at IS NULL
+        AND scs.status IN ('SAFE_CHAT_WAITING','SAFE_CHAT_ACTIVE','SAFE_CHAT_PAUSED')
     `).get(fromUserId);
 
     if (lock) {
@@ -268,7 +270,8 @@ export class MatchingService {
       SELECT uel.session_id
       FROM user_exclusive_locks uel
       JOIN safe_chat_sessions scs ON scs.id = uel.session_id
-      WHERE uel.user_id = ? AND uel.released_at IS NULL AND scs.phase = 'SANDBOX'
+      WHERE uel.user_id = ? AND uel.released_at IS NULL
+        AND scs.status IN ('SAFE_CHAT_WAITING','SAFE_CHAT_ACTIVE','SAFE_CHAT_PAUSED')
     `).get(fromUserId);
 
     if (lock) {

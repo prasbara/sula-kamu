@@ -603,24 +603,20 @@ export function createBot(): Bot<MyContext> {
         const result = SafeChatService.sendSandboxMessage(matchId, user.id, partnerId, text);
 
         if (!result.success) {
-          // Message was blocked by moderation
           await ctx.reply(result.moderation.userMessage || '⚠️ Pesan Anda tidak dapat dikirimkan karena melanggar Community Guidelines NIVA.');
 
-          // Check if session was auto-terminated
-          if (result.sandboxPhase === 'TERMINATED') {
+          if (result.sessionStatus === 'REPORTED') {
             await ctx.reply(
               '🚫 *Sesi Obrolan Dihentikan*\n\n' +
-              'Percakapan ini telah dihentikan secara otomatis karena terlalu banyak pelanggaran Community Guidelines.\n' +
-              'Silakan hubungi dukungan NIVA jika Anda merasa ini adalah kesalahan.',
+              'Percakapan ini telah dihentikan secara otomatis karena terlalu banyak pelanggaran Community Guidelines.',
               { parse_mode: 'Markdown' }
             );
             ctx.session.step = 'IDLE';
           }
-          // Keep step active so user can try again (unless terminated)
           return;
         }
 
-        // Message delivered — relay to partner via bot
+        // Relay to partner
         const partnerUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(partnerId) as { telegram_id: string } | undefined;
         const partnerProfile = MatchingService.getProfileByUserId(partnerId);
         const myProfile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(user.id) as { display_name: string } | undefined;
@@ -633,22 +629,19 @@ export function createBot(): Bot<MyContext> {
               `_Balas melalui: Matches → Chat → Balas Pesan_`,
               { parse_mode: 'Markdown' }
             );
-          } catch {
-            // Partner may have blocked the bot — fail silently
-          }
+          } catch { /* silent */ }
         }
 
-        // Build confirmation with sandbox status
         let confirmText = '✅ Pesan terkirim!';
         if (result.moderation.action === 'WARNED') {
           confirmText += '\n' + (result.moderation.userMessage ?? '');
         }
 
-        // Notify sender if sandbox just unlocked
-        if (result.sandboxJustUnlocked) {
-          confirmText += '\n\n🎉 *Fase obrolan aman 10 menit telah selesai!* Anda kini dapat meminta bertukar kontak Telegram secara aman melalui tombol di bawah.';
-        } else if (result.sandboxPhase === 'SANDBOX' && result.sandboxMinutesRemaining !== null) {
-          confirmText += `\n⏱ Fase sandbox: ${result.sandboxMinutesRemaining} menit lagi.`;
+        if (result.sessionStatus === 'SAFE_CHAT_COMPLETED') {
+          confirmText += '\n\n🎉 *10 menit sesi aktif selesai!* Pilih untuk melanjutkan secara pribadi atau akhiri.';
+        } else if (['SAFE_CHAT_ACTIVE', 'SAFE_CHAT_PAUSED'].includes(result.sessionStatus)) {
+          const mins = Math.ceil(result.remainingSeconds / 60);
+          confirmText += `\n⏱ Sesi aktif: ${mins} mnt lagi.`;
         }
 
         await ctx.reply(confirmText, {
@@ -656,8 +649,8 @@ export function createBot(): Bot<MyContext> {
           reply_markup: MatchesHandler.getChatSafetyKeyboard(
             matchId,
             partnerId,
-            result.sandboxPhase,
-            result.sandboxMinutesRemaining
+            result.sessionStatus,
+            result.remainingSeconds
           ),
         });
         ctx.session.step = 'IDLE';
@@ -845,7 +838,7 @@ export function createBot(): Bot<MyContext> {
     });
   });
 
-  // ── Open Chat Room (Sandbox-aware) ─────────────────────────────────────────
+  // ── Open Chat Room (Exclusive Session-aware) ───────────────────────────────
   bot.callbackQuery(/open_chat_(.+)/, async (ctx) => {
     const matchId = ctx.match[1];
     const telegramId = ctx.from.id.toString();
@@ -861,26 +854,18 @@ export function createBot(): Bot<MyContext> {
     const partnerId = match.user_a_id === user.id ? match.user_b_id : match.user_a_id;
     const partnerProfile = MatchingService.getProfileByUserId(partnerId);
 
-    // Ensure sandbox session exists
-    const { phase, minutesRemaining, justUnlocked } = SafeChatService.checkPhase(matchId);
-    const session = SafeChatService.getOrCreateSession(matchId); // Ensure DB row exists
+    // Join session (acquires lock only when BOTH have joined)
+    const { session, lockAcquired } = SafeChatService.joinSession(matchId, user.id);
+    const sessionStatus = SafeChatService.getSessionStatus(matchId);
 
-    // Record presence heartbeat and acquire exclusive lock if in SANDBOX phase
-    SafeChatService.recordHeartbeat(user.id);
-    if (phase === 'SANDBOX') {
-      SafeChatService.acquireExclusiveLock(session.id, match.user_a_id, match.user_b_id);
-    }
-
-    // Fetch message history (last 10 messages)
+    // Fetch message history
     const messages = SafeChatService.getChatHistory(matchId, 10);
 
-    // Build chat display
     let chatText =
       `💬 *Ruang Obrolan NIVA*\n` +
       `Dengan: *${partnerProfile?.displayName ?? 'Teman NIVA'}* (${partnerProfile?.institutionShortName ?? 'Kampus'})\n\n`;
 
-    // Sandbox status banner
-    chatText += SafeChatService.getSandboxStatusBanner(phase, minutesRemaining) + '\n\n';
+    chatText += SafeChatService.getStatusBanner(sessionStatus.status, sessionStatus.activeSeconds) + '\n\n';
     chatText += '─'.repeat(30) + '\n\n';
 
     if (messages.length === 0) {
@@ -899,7 +884,7 @@ export function createBot(): Bot<MyContext> {
 
     await ctx.reply(chatText, {
       parse_mode: 'Markdown',
-      reply_markup: MatchesHandler.getChatSafetyKeyboard(matchId, partnerId, phase, minutesRemaining),
+      reply_markup: MatchesHandler.getChatSafetyKeyboard(matchId, partnerId, sessionStatus.status, sessionStatus.remainingSeconds),
     });
   });
 
@@ -922,126 +907,112 @@ export function createBot(): Bot<MyContext> {
     ctx.session.activeChatPartnerId = partnerId;
     ctx.session.step = 'AWAITING_CHAT_MESSAGE';
 
-    const { phase, minutesRemaining } = SafeChatService.checkPhase(matchId);
+    // Record heartbeat on reply
+    SafeChatService.recordHeartbeat(user.id);
+
+    const sessionStatus = SafeChatService.getSessionStatus(matchId);
     let promptText = '✍️ Ketik pesan Anda dan kirimkan:';
-    if (phase === 'SANDBOX') {
-      promptText += `\n\n🛡️ _Fase sandbox aktif (${minutesRemaining ?? '?'} menit lagi). Nomor HP, username, dan link diblokir otomatis._`;
+    if (['SAFE_CHAT_ACTIVE', 'SAFE_CHAT_PAUSED', 'SAFE_CHAT_WAITING'].includes(sessionStatus.status)) {
+      const mins = Math.ceil(sessionStatus.remainingSeconds / 60);
+      promptText += `\n\n🛡️ _Sesi aman aktif (${mins} mnt lagi). Nomor HP, username, dan link diblokir otomatis._`;
     }
 
     await ctx.reply(promptText, { parse_mode: 'Markdown' });
   });
 
-  // ── Request Private Contact Exchange ────────────────────────────────────────
+  // ── Private Chat Consent (After 10 min session completes) ─────────────────
+  bot.callbackQuery(/consent_yes_(.+)/, async (ctx) => {
+    const matchId = ctx.match[1];
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+
+    const result = SafeChatService.recordPrivateDecision(matchId, user.id, 'YES');
+    await ctx.reply(result.message, { parse_mode: 'Markdown' });
+
+    // If PRIVATE_CHAT_ENABLED, notify partner
+    if (result.status === 'PRIVATE_CHAT_ENABLED') {
+      const db = getDatabase();
+      const match = db.prepare('SELECT user_a_id, user_b_id FROM matches WHERE id = ?').get(matchId) as any;
+      if (match) {
+        const partnerId = match.user_a_id === user.id ? match.user_b_id : match.user_a_id;
+        const partnerUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(partnerId) as { telegram_id: string } | undefined;
+        if (partnerUser) {
+          try {
+            await ctx.api.sendMessage(
+              parseInt(partnerUser.telegram_id),
+              '🎉 *Keduanya setuju!* Kalian bisa melanjutkan percakapan di Telegram secara pribadi.',
+              { parse_mode: 'Markdown' }
+            );
+          } catch { /* silent */ }
+        }
+      }
+    }
+  });
+
+  bot.callbackQuery(/consent_no_(.+)/, async (ctx) => {
+    const matchId = ctx.match[1];
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+
+    const result = SafeChatService.recordPrivateDecision(matchId, user.id, 'NO');
+    await ctx.reply(result.message, { parse_mode: 'Markdown' });
+  });
+
+  // ── End Chat Callback ─────────────────────────────────────────────────────
+  bot.callbackQuery(/end_chat_(.+)/, async (ctx) => {
+    const matchId = ctx.match[1];
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+
+    const result = SafeChatService.endSession(matchId, user.id, 'USER_ENDED');
+    await ctx.reply(result.message, { parse_mode: 'Markdown' });
+  });
+
+  // ── Legacy: Request Private Contact Exchange (for PRIVATE_CHAT_ENABLED) ────
   bot.callbackQuery(/req_private_(.+)_(.+)/, async (ctx) => {
     const matchId = ctx.match[1];
     const partnerId = ctx.match[2];
     const telegramId = ctx.from.id.toString();
     const user = OnboardingHandler.getOrCreateUser(telegramId);
-
-    const result = SafeChatService.requestPrivateContact(matchId, user.id, partnerId);
-
-    if (!result.success) {
-      await ctx.reply(result.message, { parse_mode: 'Markdown' });
-      return;
-    }
-
-    await ctx.reply(result.message, { parse_mode: 'Markdown' });
-
-    // Notify partner
-    const partnerUser = getDatabase().prepare('SELECT telegram_id FROM users WHERE id = ?').get(partnerId) as { telegram_id: string } | undefined;
-    const myProfile = getDatabase().prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(user.id) as { display_name: string } | undefined;
-    if (partnerUser && result.consentId) {
-      try {
-        await ctx.api.sendMessage(
-          parseInt(partnerUser.telegram_id),
-          `🤝 *Permintaan Bertukar Kontak*\n\n` +
-          `*${myProfile?.display_name ?? 'Teman Anda'}* ingin bertukar kontak Telegram dengan Anda secara pribadi.\n\n` +
-          `Dengan menyetujui, username Telegram Anda akan dibagikan kepada mereka — dan sebaliknya.\n` +
-          `Keputusan ini sepenuhnya pilihan Anda.`,
-          {
-            parse_mode: 'Markdown',
-            reply_markup: new InlineKeyboard()
-              .text('✅ Setuju Bertukar Kontak', `consent_accept_${result.consentId}`)
-              .row()
-              .text('❌ Tolak', `consent_decline_${result.consentId}`),
-          }
-        );
-      } catch {
-        // Partner may have blocked bot
-      }
-    }
-  });
-
-  // ── Accept/Decline Consent ───────────────────────────────────────────────────
-  bot.callbackQuery(/consent_accept_(.+)/, async (ctx) => {
-    const consentId = ctx.match[1];
-    const telegramId = ctx.from.id.toString();
-    const user = OnboardingHandler.getOrCreateUser(telegramId);
-
-    const result = SafeChatService.respondPrivateConsent(consentId, user.id, true);
-
-    if (!result.success) {
-      await ctx.reply(result.message);
-      return;
-    }
-
-    await ctx.reply(result.message, { parse_mode: 'Markdown' });
-
-    // Reveal usernames to both parties
-    const consent = result.consentRequest!;
     const db = getDatabase();
-    const requesterUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(consent.requester_id) as { telegram_id: string } | undefined;
-    const responderUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(consent.responder_id) as { telegram_id: string } | undefined;
-    const requesterProfile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(consent.requester_id) as { display_name: string } | undefined;
-    const responderProfile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(consent.responder_id) as { display_name: string } | undefined;
+
+    // Only allow if session status is PRIVATE_CHAT_ENABLED
+    const sessionStatus = SafeChatService.getSessionStatus(matchId);
+    if (sessionStatus.status !== 'PRIVATE_CHAT_ENABLED') {
+      await ctx.reply('⚠️ Bertukar kontak hanya tersedia setelah kedua peserta menyetujui lanjut privat.');
+      return;
+    }
+
+    // Reveal usernames
+    const myUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(user.id) as { telegram_id: string } | undefined;
+    const partnerUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(partnerId) as { telegram_id: string } | undefined;
+    const myProfile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(user.id) as { display_name: string } | undefined;
+    const partnerProfile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(partnerId) as { display_name: string } | undefined;
 
     const handoffNote =
       `🎉 *Pertukaran Kontak Disetujui!*\n\n` +
       `Anda kini dapat saling menghubungi secara pribadi.\n\n` +
-      `⚠️ _Ingat: Komunitas NIVA dibangun atas dasar rasa hormat dan keselamatan. ` +
-      `Lanjutkan interaksi dengan sopan dan penuh etika._`;
+      `⚠️ _Komunitas NIVA dibangun atas dasar rasa hormat. Lanjutkan interaksi dengan sopan dan penuh etika._`;
 
-    // Notify requester with responder's info
-    if (requesterUser && responderProfile) {
+    await ctx.reply(handoffNote, { parse_mode: 'Markdown' });
+
+    if (partnerUser) {
       try {
         await ctx.api.sendMessage(
-          parseInt(requesterUser.telegram_id),
-          handoffNote + `\n\nKontak teman Anda: *${responderProfile.display_name}* (Telegram: @${responderUser ? '...' : 'username_dirahasiakan'})`,
+          parseInt(partnerUser.telegram_id),
+          handoffNote,
           { parse_mode: 'Markdown' }
         );
       } catch { /* silent */ }
     }
   });
 
-  bot.callbackQuery(/consent_decline_(.+)/, async (ctx) => {
-    const consentId = ctx.match[1];
-    const telegramId = ctx.from.id.toString();
-    const user = OnboardingHandler.getOrCreateUser(telegramId);
-
-    const result = SafeChatService.respondPrivateConsent(consentId, user.id, false);
-    await ctx.reply(result.message, { parse_mode: 'Markdown' });
-
-    // Notify requester of decline
-    if (result.consentRequest) {
-      const db = getDatabase();
-      const requesterUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(result.consentRequest.requester_id) as { telegram_id: string } | undefined;
-      if (requesterUser) {
-        try {
-          await ctx.api.sendMessage(
-            parseInt(requesterUser.telegram_id),
-            `ℹ️ Permintaan bertukar kontak Anda ditolak. Percakapan tetap dapat dilanjutkan di platform NIVA.`,
-          );
-        } catch { /* silent */ }
-      }
-    }
-  });
-
-  // ── Sandbox Status Viewer ─────────────────────────────────────────────────────
+  // ── Session Status Viewer ──────────────────────────────────────────────────
   bot.callbackQuery(/sandbox_status_(.+)/, async (ctx) => {
     const matchId = ctx.match[1];
-    const { phase, minutesRemaining } = SafeChatService.checkPhase(matchId);
+    const sessionStatus = SafeChatService.getSessionStatus(matchId);
     await ctx.reply(
-      SafeChatService.getSandboxStatusBanner(phase, minutesRemaining),
+      SafeChatService.getStatusBanner(sessionStatus.status, sessionStatus.activeSeconds),
       { parse_mode: 'Markdown' }
     );
   });

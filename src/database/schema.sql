@@ -381,19 +381,49 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_user ON reviews(user_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(status);
 CREATE INDEX IF NOT EXISTS idx_reviews_rating ON reviews(rating);
 
--- 26. Safe Chat Sandbox Sessions (10-minute controlled safety sandbox per match)
+-- 26. Safe Chat Sessions — Exclusive Active Match (10-min mutually-active accumulator)
 CREATE TABLE IF NOT EXISTS safe_chat_sessions (
     id TEXT PRIMARY KEY,
     match_id TEXT UNIQUE NOT NULL,
-    started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    sandbox_ends_at TEXT NOT NULL, -- started_at + 10 minutes
-    phase TEXT NOT NULL DEFAULT 'SANDBOX' CHECK(phase IN ('SANDBOX', 'UNLOCKED', 'TERMINATED')),
+    user_a_id TEXT NOT NULL,
+    user_b_id TEXT NOT NULL,
+    -- Session lifecycle status
+    status TEXT NOT NULL DEFAULT 'SAFE_CHAT_WAITING' CHECK(status IN (
+        'SAFE_CHAT_WAITING',      -- match created, neither/one has joined
+        'SAFE_CHAT_ACTIVE',       -- both joined, mutual heartbeats, timer running
+        'SAFE_CHAT_PAUSED',       -- one user inactive, grace period active, timer frozen
+        'SAFE_CHAT_COMPLETED',    -- 600 active seconds reached, awaiting decision
+        'PRIVATE_CHAT_PENDING',   -- one user said YES, awaiting other
+        'PRIVATE_CHAT_ENABLED',   -- both said YES
+        'ENDED_BY_USER',          -- user chose to end
+        'ENDED_BY_INACTIVITY',    -- grace period expired
+        'BLOCKED',                -- block action triggered
+        'REPORTED'                -- report action triggered
+    )),
+    -- Join gate: exclusive lock only acquired when BOTH have joined
+    user_a_joined_at TEXT,
+    user_b_joined_at TEXT,
+    -- Authoritative mutual-active timer (seconds, max 600)
+    active_seconds INTEGER NOT NULL DEFAULT 0,
+    last_tick_at TEXT,            -- last time active_seconds was updated
+    last_both_active_at TEXT,     -- last time both users had a valid heartbeat
+    -- Inactivity tracking
+    paused_at TEXT,               -- when session transitioned to PAUSED
+    -- End tracking
+    ended_at TEXT,
+    end_reason TEXT,
+    -- Moderation
     message_count INTEGER NOT NULL DEFAULT 0,
     flagged_message_count INTEGER NOT NULL DEFAULT 0,
     last_moderation_action TEXT,
+    -- Private consent decisions (YES/NO/PENDING per user)
+    user_a_private_decision TEXT CHECK(user_a_private_decision IN ('YES', 'NO', NULL)),
+    user_b_private_decision TEXT CHECK(user_b_private_decision IN ('YES', 'NO', NULL)),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE
+    FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_a_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_b_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- 27. Mutual Private Contact Consents (Double opt-in before Telegram exchange)
@@ -427,7 +457,8 @@ CREATE TABLE IF NOT EXISTS moderated_messages (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_safe_chat_match ON safe_chat_sessions(match_id);
-CREATE INDEX IF NOT EXISTS idx_safe_chat_phase ON safe_chat_sessions(phase);
+CREATE INDEX IF NOT EXISTS idx_safe_chat_status ON safe_chat_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_safe_chat_users ON safe_chat_sessions(user_a_id, user_b_id);
 CREATE INDEX IF NOT EXISTS idx_private_consents_match ON private_contact_consents(match_id);
 CREATE INDEX IF NOT EXISTS idx_moderated_messages_match ON moderated_messages(match_id);
 CREATE INDEX IF NOT EXISTS idx_moderated_messages_sender ON moderated_messages(sender_id);
@@ -462,9 +493,23 @@ CREATE TABLE IF NOT EXISTS user_exclusive_locks (
 -- 31. User Presence Heartbeat (For 10-minute mutual active conversation tracking)
 CREATE TABLE IF NOT EXISTS user_presence (
     user_id TEXT PRIMARY KEY,
+    session_id TEXT,              -- which session the heartbeat is for
     last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
-    presence_status TEXT NOT NULL DEFAULT 'ACTIVE',
+    presence_status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(presence_status IN ('ACTIVE', 'INACTIVE')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- 32. Notification Events (Audit log for NotifyNIVABot)
+CREATE TABLE IF NOT EXISTS notification_events (
+    id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    user_id TEXT,
+    status TEXT NOT NULL DEFAULT 'SENT' CHECK(status IN ('SENT', 'FAILED', 'SKIPPED')),
+    error_message TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_events_user ON notification_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_notification_events_type ON notification_events(event_type);
 

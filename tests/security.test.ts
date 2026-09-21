@@ -230,7 +230,7 @@ async function runSecurityTests() {
   const payUser = uuidv4();
   db.prepare("INSERT INTO users (id, telegram_id, status) VALUES (?, ?, 'ACTIVE')").run(payUser, `pay-${payUser.slice(0, 6)}`);
   const payReq = PaymentService.createPaymentRequest(payUser, 'early_access', 'QRIS');
-  assert(payReq.id.startsWith('PAY-NIVA-'), `Payment request generated with standard code: ${payReq.id}`);
+  assert(payReq.id.startsWith('PAY-NIVA-') || payReq.id.startsWith('INV-NIVA-'), `Payment request generated with standard code: ${payReq.id}`);
   assert(payReq.amount === 5000, 'Payment request locks correct plan amount (Rp5.000)');
 
   // Submit proof

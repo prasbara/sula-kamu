@@ -12,7 +12,9 @@
     "start:web": "next start -p 3001",
     "admin": "tsx src/admin/server.ts",
     "simulate": "tsx src/cli/simulate.ts",
-    "test:security": "tsx tests/security.test.ts"
+    "test:security": "tsx tests/security.test.ts",
+    "test:safechat": "tsx tests/safe_chat_session.test.ts",
+    "test:all": "tsx tests/security.test.ts && tsx tests/safe_chat_session.test.ts && tsx tests/production_audit.test.ts"
   },
   "dependencies": {
     "@grammyjs/conversations": "^2.1.1",
