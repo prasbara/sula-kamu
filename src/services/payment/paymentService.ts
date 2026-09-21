@@ -122,8 +122,13 @@ export class PaymentService {
   /**
    * FIFO Payment Queue for Admin (Section 15: Earliest submitted proof first)
    */
-  public static getPaymentQueue(): any[] {
+  public static getPaymentQueue(statusFilter = 'ALL'): any[] {
     const db = getDatabase();
+    let whereClause = "WHERE pr.status IN ('UNDER_REVIEW', 'PROOF_SUBMITTED', 'PENDING')";
+    if (statusFilter && statusFilter !== 'ALL' && statusFilter !== 'PENDING') {
+      whereClause = `WHERE pr.status = '${statusFilter}'`;
+    }
+
     return db.prepare(`
       SELECT 
         pr.id as payment_id,
@@ -135,17 +140,22 @@ export class PaymentService {
         pr.proof_submitted_at,
         pr.created_at,
         pr.review_notes,
+        pr.proof_image_path,
         sp.name as plan_name,
         p.display_name,
         i.short_name as institution_short_name,
         u.verification_status,
-        u.subscription_status
+        u.subscription_status,
+        pp.storage_key,
+        pp.proof_data,
+        pp.mime_type
       FROM payment_requests pr
       JOIN subscription_plans sp ON sp.id = pr.plan_id
       LEFT JOIN profiles p ON p.user_id = pr.user_id
       LEFT JOIN institutions i ON i.id = p.institution_id
+      LEFT JOIN payment_proofs pp ON pp.payment_id = pr.id
       JOIN users u ON u.id = pr.user_id
-      WHERE pr.status IN ('UNDER_REVIEW', 'PROOF_SUBMITTED', 'PENDING')
+      ${whereClause}
       ORDER BY 
         CASE WHEN pr.proof_submitted_at IS NOT NULL THEN 0 ELSE 1 END ASC,
         pr.proof_submitted_at ASC,

@@ -50,12 +50,15 @@ export async function GET(req: NextRequest) {
   else if (filter === 'VERIFICATION_PENDING') sql += " AND u.verification_status IN ('PHOTO_PENDING', 'KTM_PENDING')";
   else if (filter === 'SUSPENDED') sql += " AND u.status = 'SUSPENDED'";
 
+  const params: any[] = [];
   if (q) {
-    sql += ` AND (u.id LIKE '%${q}%' OR p.display_name LIKE '%${q}%' OR i.name LIKE '%${q}%' OR i.short_name LIKE '%${q}%')`;
+    sql += ` AND (u.id LIKE ? OR p.display_name LIKE ? OR i.name LIKE ? OR i.short_name LIKE ?)`;
+    const searchPattern = `%${q}%`;
+    params.push(searchPattern, searchPattern, searchPattern, searchPattern);
   }
 
   sql += ' ORDER BY u.created_at DESC LIMIT 100';
 
-  const users = db.prepare(sql).all();
+  const users = db.prepare(sql).all(...params);
   return NextResponse.json({ users });
 }

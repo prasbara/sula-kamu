@@ -12,10 +12,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
   }
 
+  const { searchParams } = new URL(req.url);
+  const action = searchParams.get('action')?.trim();
+
   const db = getDatabase();
-  const logs = db.prepare(`
-    SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100
-  `).all();
+  let sql = 'SELECT * FROM audit_logs';
+  const params: any[] = [];
+  if (action) {
+    sql += ' WHERE action LIKE ?';
+    params.push(`%${action}%`);
+  }
+  sql += ' ORDER BY created_at DESC LIMIT 100';
+  const logs = db.prepare(sql).all(...params);
 
   return NextResponse.json({ logs });
 }
