@@ -99,6 +99,7 @@ export default function StrangerCamApp() {
   const [locationVerified, setLocationVerified] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const [onlineCount, setOnlineCount] = useState<number>(1);
 
   // Active Call State
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -270,6 +271,24 @@ export default function StrangerCamApp() {
       clearAllTimers();
     };
   }, []);
+
+  // Poll online Stranger Cam users periodically (strictly separate from chatbot users)
+  useEffect(() => {
+    async function fetchOnlineCount() {
+      try {
+        const uid = userId || localStorage.getItem('niva_stranger_user_id') || '';
+        const res = await fetch(`/api/stranger-cam/online?userId=${encodeURIComponent(uid)}`);
+        const data = await res.json();
+        if (data.success && typeof data.onlineCount === 'number') {
+          setOnlineCount(Math.max(data.onlineCount, 1));
+        }
+      } catch {}
+    }
+
+    fetchOnlineCount();
+    const interval = setInterval(fetchOnlineCount, 5000);
+    return () => clearInterval(interval);
+  }, [userId]);
 
   function clearAllTimers() {
     if (queuePollingRef.current) clearInterval(queuePollingRef.current);
@@ -1354,6 +1373,10 @@ export default function StrangerCamApp() {
 
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-center gap-1.5">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>{onlineCount} Pengguna Online</span>
+              </span>
               <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[11px] font-bold">
                 <CheckCircle2 className="w-3 h-3 text-emerald-400" />
                 <span>Tanpa Perlu Mendaftar</span>
@@ -1480,9 +1503,15 @@ export default function StrangerCamApp() {
       {step === 'DEVICE_SETUP' && (
         <div className="max-w-lg mx-auto py-6 text-center space-y-6">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#8A5A9A]/20 border border-[#8A5A9A]/30 text-[#E8B4C8] text-xs font-bold">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Zero Recording Guaranteed</span>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>{onlineCount} Pengguna Online</span>
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#8A5A9A]/20 border border-[#8A5A9A]/30 text-[#E8B4C8] text-xs font-bold">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Zero Recording Guaranteed</span>
+              </div>
             </div>
             <h3 className="text-2xl font-display font-black text-white">
               Izinkan Kamera & Cek Wajah
@@ -1588,6 +1617,10 @@ export default function StrangerCamApp() {
           </div>
 
           <div className="space-y-2">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold mx-auto mb-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>{onlineCount} Pengguna Online di Semarang</span>
+            </div>
             <h3 className="text-2xl font-display font-bold text-white">
               Mencari seseorang di Semarang...
             </h3>
@@ -1641,6 +1674,10 @@ export default function StrangerCamApp() {
             </div>
 
             <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold border border-emerald-500/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span>{onlineCount} Online</span>
+              </span>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-semibold border border-purple-500/30">
                 <UserCheck className="w-3 h-3" />
                 <span>Face Gate Active</span>

@@ -853,6 +853,32 @@ export class StrangerCamService {
   }
 
   /**
+   * Get total number of distinct users currently online in Stranger Cam.
+   * Based on active presence heartbeat within last 60 seconds, queue, or active sessions.
+   * Strictly separate from chatbot users!
+   */
+  public static getOnlineStrangerCount(): number {
+    const db = getDatabase();
+    try {
+      const row = db.prepare(`
+        SELECT COUNT(DISTINCT uid) as count FROM (
+          SELECT user_id as uid FROM stranger_presence WHERE last_heartbeat >= datetime('now', '-60 seconds')
+          UNION
+          SELECT user_id as uid FROM stranger_queue
+          UNION
+          SELECT user_a_id as uid FROM stranger_sessions WHERE status IN ('MATCHING', 'CONNECTED')
+          UNION
+          SELECT user_b_id as uid FROM stranger_sessions WHERE status IN ('MATCHING', 'CONNECTED')
+        )
+      `).get() as { count: number } | undefined;
+
+      return row ? Number(row.count) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
    * Retrieve safe session status and peer public information.
    * NEVER returns raw GPS, phone, email, NIM, or Telegram username.
    */

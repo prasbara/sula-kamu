@@ -19,8 +19,8 @@ export class StatisticsService {
       | undefined;
 
     if (!row) {
-      // Calculate from existing active users
-      const countRow = db.prepare("SELECT COUNT(*) as count FROM users WHERE status = 'ACTIVE'").get() as {
+      // Calculate from existing active chatbot users (strictly excluding anonymous stranger cam users)
+      const countRow = db.prepare("SELECT COUNT(*) as count FROM users WHERE status = 'ACTIVE' AND telegram_id NOT LIKE 'stranger_%'").get() as {
         count: number;
       };
       const initialTotal = countRow.count;

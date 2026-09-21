@@ -5,6 +5,7 @@ export async function GET() {
   try {
     const launched = StrangerCamService.isFeatureLaunched();
     const waitlistCount = StrangerCamService.getWaitlistCount();
+    const onlineCount = StrangerCamService.getOnlineStrangerCount();
 
     return NextResponse.json({
       feature: 'NIVA_STRANGER_CAM',
@@ -16,6 +17,7 @@ export async function GET() {
       region: 'Semarang',
       badges: ['18+ Only', 'Semarang Only', '1-on-1', 'Privacy First', 'Moderated'],
       waitlistCount,
+      onlineCount,
       requirements: {
         minAge: 18,
         locationConfirmationRequired: true,

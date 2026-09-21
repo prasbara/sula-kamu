@@ -102,7 +102,7 @@ export default function StrangerCamPage() {
       <div className="text-center space-y-4 max-w-3xl mx-auto">
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#5B3A6D]/10 text-[#8A5A9A] text-xs font-semibold">
           <Camera className="w-4 h-4" />
-          <span>{isEnabled ? 'Live Production • Komunitas Semarang' : 'Upcoming Feature • Komunitas Semarang'}</span>
+          <span>{isEnabled ? 'Live Production • Komunitas Semarang (18+)' : 'Upcoming Feature • Komunitas Semarang'}</span>
         </div>
         <h1 className="text-4xl sm:text-5xl font-display font-extrabold text-[#17151A] tracking-tight">
           NIVA Stranger Cam
@@ -111,8 +111,7 @@ export default function StrangerCamPage() {
           Meet someone new. Start with a hello.
         </p>
         <p className="text-sm sm:text-base text-[#68626D] max-w-2xl mx-auto leading-relaxed">
-          Percakapan 1-on-1 acak yang menghubungkan mahasiswa di Semarang secara langsung dari browser.
-          Temui teman baru dari UNDIP, UNNES, UDINUS, UNISSULA, POLINES, dan 28 kampus lainnya di Kota Atlas.
+          Percakapan 1-on-1 acak di wilayah Semarang langsung dari browser. Terbuka untuk umum (18+) dan mahasiswa — tanpa perlu mendaftar, tanpa akun, langsung terhubung secara aman dan instan.
         </p>
       </div>
 
@@ -132,7 +131,7 @@ export default function StrangerCamPage() {
             Etika, Privasi, & Standar Keamanan
           </h2>
           <p className="text-xs sm:text-sm text-[#68626D] max-w-xl mx-auto">
-            NIVA dibangun dengan prinsip Safe Social Experience agar interaksi antar-mahasiswa Semarang tetap sehat dan bermartabat.
+            NIVA dibangun dengan prinsip Safe Social Experience agar interaksi antar-pengguna di Semarang tetap sehat dan bermartabat.
           </p>
         </div>
 
@@ -141,9 +140,9 @@ export default function StrangerCamPage() {
             <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center text-[#5B3A6D]">
               <MapPin className="w-5 h-5" />
             </div>
-            <h3 className="font-bold text-sm text-[#17151A]">Khusus Mahasiswa di Semarang</h3>
+            <h3 className="font-bold text-sm text-[#17151A]">Terbuka untuk Umum (18+) & Mahasiswa</h3>
             <p className="text-xs text-[#68626D] leading-relaxed">
-              Memastikan partner bicara Anda adalah sesama mahasiswa yang aktif di area Semarang, tanpa menyimpan koordinat GPS pribadi Anda.
+              Bebas digunakan oleh siapa saja di wilayah Semarang tanpa syarat harus menjadi mahasiswa atau mengunggah kartu identitas.
             </p>
           </div>
 
