@@ -213,6 +213,20 @@ export function initDatabase(customPath?: string): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(contact_info, feature)
     )`,
+    `CREATE TABLE IF NOT EXISTS stranger_signals (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      receiver_id TEXT NOT NULL,
+      signal_type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS stranger_presence (
+      user_id TEXT PRIMARY KEY,
+      session_id TEXT,
+      last_heartbeat TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
   ];
 
   for (const sql of migrations) {

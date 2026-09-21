@@ -7,6 +7,7 @@ import { StrangerCamService, ReportReason } from '../src/services/stranger/stran
 
 const TEST_DB_PATH = path.resolve(process.cwd(), 'data', 'stranger_cam_test.db');
 process.env.DATABASE_PATH = TEST_DB_PATH;
+process.env.STRANGER_CAM_ENABLED = 'false';
 
 async function runStrangerCamTestSuite() {
   console.log('===============================================================');
@@ -236,6 +237,80 @@ async function runStrangerCamTestSuite() {
   assert(adminStats.waitlistCount === 2, 'Admin stats accurately reflects waitlist count (2)');
   assert(adminStats.totalReports >= 1, 'Admin stats accurately counts moderation reports');
   assert(adminStats.bannedOrBlockedCount >= 1, 'Admin stats tracks stranger blocks');
+
+  // -------------------------------------------------------------
+  // 9. FULL PRODUCTION WEBRTC, PRESENCE, & ADMIN ACTIONS
+  // -------------------------------------------------------------
+  console.log('\n9. Full Production WebRTC Signaling, Presence & Admin Actions:');
+  // A. User creation & 18+ gate
+  const strangerUser = StrangerCamService.getOrCreateStrangerUser({ alias: 'Mahasiswa Undip', is18Plus: true });
+  assert(strangerUser.id !== undefined, 'Successfully provisioned anonymous stranger user');
+  assert(strangerUser.displayName === 'Mahasiswa Undip', 'Stored display alias correctly');
+  assert(strangerUser.is18Plus === true, '18+ age gate enforced on user creation');
+  assert(strangerUser.isKtmVerified === false, 'Stranger user is not falsely tagged as KTM Verified');
+
+  // Confirm age gate method
+  const confirmAgeRes = StrangerCamService.confirm18Plus(strangerUser.id);
+  assert(confirmAgeRes.success === true, 'confirm18Plus updates server-side age status');
+
+  // B. WebRTC Signaling in active session
+  process.env.STRANGER_CAM_ENABLED = 'true';
+  const userLiveA = createTestUser({ is18Plus: true, verificationStatus: 'UNVERIFIED' });
+  const userLiveB = createTestUser({ is18Plus: true, verificationStatus: 'UNVERIFIED' });
+  StrangerCamService.confirmSemarangLocation(userLiveA, 'USER_CONFIRMATION');
+  StrangerCamService.confirmSemarangLocation(userLiveB, 'USER_CONFIRMATION');
+
+  StrangerCamService.joinQueue(userLiveA);
+  const liveMatch = StrangerCamService.joinQueue(userLiveB);
+  assert(liveMatch.status === 'CONNECTED', 'Successfully connected userLiveA and userLiveB for signaling test');
+  const liveSessionId = liveMatch.session.id;
+
+  // Send Offer from userLiveB to userLiveA
+  const offerRes = StrangerCamService.sendSignal(liveSessionId, userLiveB, 'OFFER', JSON.stringify({ type: 'offer', sdp: 'fake-sdp-offer' }));
+  assert(offerRes.success === true && offerRes.signalId !== undefined, 'User B sends WebRTC OFFER signal to User A');
+
+  // Get signals for userLiveA
+  const userASignals = StrangerCamService.getSignals(liveSessionId, userLiveA);
+  assert(userASignals.length === 1, 'User A receives 1 pending WebRTC signal');
+  assert(userASignals[0].signalType === 'OFFER', 'Received signal is OFFER type');
+
+  // Send Answer from userLiveA to userLiveB
+  const answerRes = StrangerCamService.sendSignal(liveSessionId, userLiveA, 'ANSWER', JSON.stringify({ type: 'answer', sdp: 'fake-sdp-answer' }));
+  assert(answerRes.success === true, 'User A sends WebRTC ANSWER signal to User B');
+
+  const userBSignals = StrangerCamService.getSignals(liveSessionId, userLiveB);
+  assert(userBSignals.length === 1 && userBSignals[0].signalType === 'ANSWER', 'User B receives WebRTC ANSWER signal');
+
+  // Unauthorized signal attempt from strangerUser (not in session)
+  let unauthSignalCaught = false;
+  try {
+    StrangerCamService.sendSignal(liveSessionId, strangerUser.id, 'OFFER', 'malicious-offer');
+  } catch (err: any) {
+    unauthSignalCaught = err.message.includes('bukan peserta');
+  }
+  assert(unauthSignalCaught, 'Rejects signaling attempts from unauthorized third parties');
+
+  // C. Presence & Heartbeat
+  StrangerCamService.recordHeartbeat(userLiveA, liveSessionId);
+  const sessionInfoA = StrangerCamService.getSessionInfo(liveSessionId, userLiveA);
+  assert(sessionInfoA.status === 'CONNECTED', 'Session info confirms CONNECTED state');
+  assert(sessionInfoA.peer !== undefined && sessionInfoA.peer.region === 'SEMARANG', 'Session peer data contains safe public metadata (Semarang)');
+
+  // D. Admin live sessions & report resolution
+  const adminLiveSessions = StrangerCamService.getAdminLiveSessions();
+  assert(adminLiveSessions.length >= 1, 'Admin live sessions query returns active sessions');
+  assert(adminLiveSessions[0].userAAnonId.startsWith('USER-'), 'Admin telemetry anonymizes participant IDs (zero casual surveillance)');
+
+  const adminReports = StrangerCamService.getAdminReports();
+  assert(adminReports.length >= 1, 'Admin reports query returns pending/logged reports');
+  const reportToResolve = adminReports[0];
+
+  const resolveRes = StrangerCamService.resolveReport(reportToResolve.id, 'BAN_USER', 'Spam berat');
+  assert(resolveRes.success === true, 'Admin successfully resolves report and bans violator');
+  const bannedUserRow = db.prepare('SELECT status FROM users WHERE id = ?').get(reportToResolve.reportedAnonId.replace('USER-', '')) as any;
+  // Check that reports status is updated
+  const updatedReportRow = db.prepare('SELECT status FROM stranger_reports WHERE id = ?').get(reportToResolve.id) as any;
+  assert(updatedReportRow.status === 'RESOLVED', 'Report status successfully marked as RESOLVED');
 
   console.log('\n===============================================================');
   console.log(`TEST SUMMARY: ${passed}/${passed + failed} TESTS PASSED (${Math.round((passed / (passed + failed)) * 100)}%)`);

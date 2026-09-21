@@ -9,7 +9,7 @@ export async function GET() {
     return NextResponse.json({
       feature: 'NIVA_STRANGER_CAM',
       launched,
-      state: 'COMING_SOON',
+      state: launched ? 'PRODUCTION_READY' : 'COMING_SOON',
       title: 'NIVA Stranger Cam',
       headline: 'Meet a stranger. Start a conversation.',
       tagline: 'Meet someone new in Semarang.',

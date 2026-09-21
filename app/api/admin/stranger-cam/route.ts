@@ -1,46 +1,76 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { AdminAuthService } from '@/src/services/auth/adminAuthService';
 import { StrangerCamService } from '@/src/services/stranger/strangerCamService';
-import { getDatabase } from '@/src/database/db';
+import { config } from '@/src/config/index';
 
-export async function GET() {
+export const dynamic = 'force-dynamic';
+
+function isAuthorizedAdmin(req: NextRequest): boolean {
+  const token = req.cookies.get('niva_admin_token')?.value;
+  if (token && AdminAuthService.validateSession(token)) {
+    return true;
+  }
+  const apiKey = req.headers.get('x-api-key');
+  if (apiKey && apiKey === config.ADMIN_API_KEY) {
+    return true;
+  }
+  return false;
+}
+
+export async function GET(req: NextRequest) {
+  if (!isAuthorizedAdmin(req)) {
+    return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
+  }
+
   try {
     const stats = StrangerCamService.getAdminStats();
-    const db = getDatabase();
-
-    // Fetch recent reports with reporter/reported user info (no raw video)
-    const recentReports = db.prepare(`
-      SELECT 
-        sr.id,
-        sr.session_id,
-        sr.reporter_id,
-        sr.reported_user_id,
-        sr.reason,
-        sr.details,
-        sr.status,
-        sr.created_at
-      FROM stranger_reports sr
-      ORDER BY sr.created_at DESC
-      LIMIT 20
-    `).all();
-
-    // Fetch recent waitlist signups
-    const recentWaitlist = db.prepare(`
-      SELECT id, contact_info, created_at
-      FROM feature_waitlist
-      WHERE feature = 'STRANGER_CAM'
-      ORDER BY created_at DESC
-      LIMIT 20
-    `).all();
+    const liveSessions = StrangerCamService.getAdminLiveSessions();
+    const reports = StrangerCamService.getAdminReports();
+    const safetyEvents = StrangerCamService.getAdminSafetyEvents();
 
     return NextResponse.json({
       stats,
-      recentReports,
-      recentWaitlist,
+      liveSessions,
+      reports,
+      safetyEvents,
     });
   } catch (err: any) {
     return NextResponse.json(
-      { error: 'ADMIN_ERROR', message: err.message },
+      { error: 'SERVER_ERROR', message: err.message },
       { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: NextRequest) {
+  if (!isAuthorizedAdmin(req)) {
+    return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
+  }
+
+  try {
+    const body = await req.json();
+    const { action, reportId, adminNotes } = body;
+
+    if (!reportId || !action) {
+      return NextResponse.json(
+        { error: 'INVALID_REQUEST', message: 'reportId and action are required.' },
+        { status: 400 }
+      );
+    }
+
+    if (!['RESOLVED', 'DISMISSED', 'BAN_USER'].includes(action)) {
+      return NextResponse.json(
+        { error: 'INVALID_ACTION', message: 'action must be RESOLVED, DISMISSED, or BAN_USER.' },
+        { status: 400 }
+      );
+    }
+
+    const result = StrangerCamService.resolveReport(reportId, action as any, adminNotes);
+    return NextResponse.json(result);
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: 'MODERATION_ERROR', message: err.message || 'Gagal memproses moderasi.' },
+      { status: 400 }
     );
   }
 }

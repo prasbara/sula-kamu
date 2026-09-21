@@ -602,3 +602,24 @@ CREATE TABLE IF NOT EXISTS feature_waitlist (
 );
 CREATE INDEX IF NOT EXISTS idx_feature_waitlist ON feature_waitlist(feature);
 
+-- 40. Stranger Cam WebRTC Signaling (Short-lived peer connection exchange)
+CREATE TABLE IF NOT EXISTS stranger_signals (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    receiver_id TEXT NOT NULL,
+    signal_type TEXT NOT NULL CHECK(signal_type IN ('OFFER', 'ANSWER', 'CANDIDATE')),
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(session_id) REFERENCES stranger_sessions(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stranger_signals_session ON stranger_signals(session_id, receiver_id);
+
+-- 41. Stranger Cam Presence & Heartbeat Tracking
+CREATE TABLE IF NOT EXISTS stranger_presence (
+    user_id TEXT PRIMARY KEY,
+    session_id TEXT,
+    last_heartbeat TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+

@@ -16,6 +16,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../database/db';
+import { config } from '../../config/index';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -74,7 +75,9 @@ export class StrangerCamService {
    * Coming soon by default — do not display fake availability or "Start Now".
    */
   public static isFeatureLaunched(): boolean {
-    return false; // Upcoming feature
+    if (process.env.STRANGER_CAM_ENABLED === 'false') return false;
+    if (process.env.STRANGER_CAM_ENABLED === 'true') return true;
+    return Boolean(config.STRANGER_CAM_ENABLED);
   }
 
   // ── Waitlist / Notify Me ────────────────────────────────────────────────────
@@ -591,5 +594,399 @@ export class StrangerCamService {
       pendingReports: Number(pending?.count || 0),
       bannedOrBlockedCount: Number(blocks?.count || 0),
     };
+  }
+
+  // ── User Management & 18+ Gate ─────────────────────────────────────────────
+
+  /**
+   * Get or create a verified stranger participant.
+   * Minimal identity: Safe alias, age 18+ confirmation.
+   * Raw personal data (phone, email, NIM, KTM) is never exposed.
+   */
+  public static getOrCreateStrangerUser(opts: {
+    userId?: string;
+    alias?: string;
+    is18Plus?: boolean;
+  }): {
+    id: string;
+    displayName: string;
+    is18Plus: boolean;
+    isKtmVerified: boolean;
+  } {
+    const db = getDatabase();
+
+    if (opts.userId) {
+      const existing = db.prepare(`
+        SELECT u.id, u.status, u.is_18_plus, u.verification_status, p.display_name
+        FROM users u
+        LEFT JOIN profiles p ON u.id = p.user_id
+        WHERE u.id = ?
+      `).get(opts.userId) as any;
+
+      if (existing) {
+        if (opts.is18Plus && !existing.is_18_plus) {
+          db.prepare("UPDATE users SET is_18_plus = 1, updated_at = datetime('now') WHERE id = ?").run(existing.id);
+          existing.is_18_plus = 1;
+        }
+        return {
+          id: existing.id,
+          displayName: existing.display_name || 'Mahasiswa Semarang',
+          is18Plus: Boolean(existing.is_18_plus),
+          isKtmVerified: existing.verification_status === 'KTM_VERIFIED',
+        };
+      }
+    }
+
+    // Create a new participant record with synthetic Telegram ID for anonymous web stranger
+    const newUserId = uuidv4();
+    const syntheticTg = `stranger_${uuidv4().substring(0, 12)}`;
+    const alias = (opts.alias || 'Teman Semarang').trim().substring(0, 30);
+    const isAdult = opts.is18Plus ? 1 : 0;
+
+    db.prepare(`
+      INSERT INTO users (id, telegram_id, status, is_18_plus, verification_status, subscription_status, created_at, updated_at)
+      VALUES (?, ?, 'ACTIVE', ?, 'UNVERIFIED', 'FREE', datetime('now'), datetime('now'))
+    `).run(newUserId, syntheticTg, isAdult);
+
+    db.prepare(`
+      INSERT INTO profiles (id, user_id, display_name, age, institution_id, study_field, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, 20, 'inst-undip', 'Semarang Student', 1, datetime('now'), datetime('now'))
+    `).run(uuidv4(), newUserId, alias);
+
+    return {
+      id: newUserId,
+      displayName: alias,
+      is18Plus: Boolean(isAdult),
+      isKtmVerified: false,
+    };
+  }
+
+  /**
+   * Enforce server-side 18+ age gate.
+   */
+  public static confirm18Plus(userId: string): { success: boolean } {
+    const db = getDatabase();
+    const result = db.prepare(`
+      UPDATE users
+      SET is_18_plus = 1, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(userId);
+
+    if (result.changes === 0) {
+      throw new Error('User not found');
+    }
+    return { success: true };
+  }
+
+  // ── WebRTC Signaling & Heartbeat ───────────────────────────────────────────
+
+  /**
+   * Send WebRTC signal (OFFER, ANSWER, CANDIDATE) to matching partner.
+   * Authorization: sender must belong to the active session.
+   */
+  public static sendSignal(
+    sessionId: string,
+    senderId: string,
+    signalType: 'OFFER' | 'ANSWER' | 'CANDIDATE',
+    payload: string
+  ): { success: boolean; signalId: string } {
+    const db = getDatabase();
+
+    // Verify session and determine receiver
+    const session = db.prepare(`
+      SELECT id, user_a_id, user_b_id, status
+      FROM stranger_sessions
+      WHERE id = ?
+    `).get(sessionId) as any;
+
+    if (!session) {
+      throw new Error('Sesi tidak ditemukan.');
+    }
+
+    if (session.status !== 'CONNECTED' && session.status !== 'MATCHING') {
+      throw new Error('Sesi tidak lagi aktif.');
+    }
+
+    let receiverId = '';
+    if (session.user_a_id === senderId) {
+      receiverId = session.user_b_id;
+    } else if (session.user_b_id === senderId) {
+      receiverId = session.user_a_id;
+    } else {
+      throw new Error('Anda bukan peserta dalam sesi ini.');
+    }
+
+    const signalId = uuidv4();
+    db.prepare(`
+      INSERT INTO stranger_signals (id, session_id, sender_id, receiver_id, signal_type, payload, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(signalId, sessionId, senderId, receiverId, signalType, payload);
+
+    return { success: true, signalId };
+  }
+
+  /**
+   * Poll WebRTC signals for recipient.
+   */
+  public static getSignals(
+    sessionId: string,
+    receiverId: string,
+    afterTimestamp?: string
+  ): Array<{ id: string; signalType: string; payload: string; createdAt: string }> {
+    const db = getDatabase();
+
+    let query = `
+      SELECT id, signal_type as signalType, payload, created_at as createdAt
+      FROM stranger_signals
+      WHERE session_id = ? AND receiver_id = ?
+    `;
+    const params: any[] = [sessionId, receiverId];
+
+    if (afterTimestamp) {
+      query += ' AND created_at > ?';
+      params.push(afterTimestamp);
+    }
+    query += ' ORDER BY created_at ASC LIMIT 50';
+
+    const signals = db.prepare(query).all(...params) as any[];
+
+    // Cleanup delivered signals older than 2 minutes
+    try {
+      db.prepare(`
+        DELETE FROM stranger_signals
+        WHERE session_id = ? AND receiver_id = ? AND created_at < datetime('now', '-2 minutes')
+      `).run(sessionId, receiverId);
+    } catch {
+      // Ignore
+    }
+
+    return signals;
+  }
+
+  /**
+   * Record presence heartbeat.
+   * Auto-cleans stale queue entries if no heartbeat received within 45 seconds.
+   */
+  public static recordHeartbeat(userId: string, sessionId?: string): void {
+    const db = getDatabase();
+
+    db.prepare(`
+      INSERT INTO stranger_presence (user_id, session_id, last_heartbeat)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(user_id) DO UPDATE SET
+        session_id = COALESCE(?, session_id),
+        last_heartbeat = datetime('now')
+    `).run(userId, sessionId || null, sessionId || null);
+
+    // Housekeeping: remove idle queue members whose last heartbeat was > 45s ago
+    try {
+      db.prepare(`
+        DELETE FROM stranger_queue
+        WHERE user_id IN (
+          SELECT sq.user_id FROM stranger_queue sq
+          LEFT JOIN stranger_presence sp ON sq.user_id = sp.user_id
+          WHERE sp.last_heartbeat IS NULL OR sp.last_heartbeat < datetime('now', '-45 seconds')
+        )
+      `).run();
+    } catch {
+      // Ignore housekeeping errors
+    }
+  }
+
+  /**
+   * Retrieve safe session status and peer public information.
+   * NEVER returns raw GPS, phone, email, NIM, or Telegram username.
+   */
+  public static getSessionInfo(sessionId: string, userId: string): {
+    id: string;
+    status: string;
+    startedAt: string;
+    endReason?: string;
+    peer?: {
+      id: string;
+      displayName: string;
+      isKtmVerified: boolean;
+      region: string;
+      isOnline: boolean;
+    };
+  } {
+    const db = getDatabase();
+
+    const session = db.prepare(`
+      SELECT * FROM stranger_sessions WHERE id = ?
+    `).get(sessionId) as any;
+
+    if (!session) {
+      throw new Error('Sesi tidak ditemukan.');
+    }
+
+    const peerId = session.user_a_id === userId ? session.user_b_id : (session.user_b_id === userId ? session.user_a_id : null);
+    if (!peerId) {
+      throw new Error('Anda bukan peserta sesi ini.');
+    }
+
+    const peerUser = db.prepare(`
+      SELECT u.id, u.verification_status, p.display_name, sp.last_heartbeat
+      FROM users u
+      LEFT JOIN profiles p ON u.id = p.user_id
+      LEFT JOIN stranger_presence sp ON u.id = sp.user_id
+      WHERE u.id = ?
+    `).get(peerId) as any;
+
+    let isOnline = false;
+    if (peerUser?.last_heartbeat) {
+      const diffMs = Date.now() - new Date(peerUser.last_heartbeat).getTime();
+      isOnline = diffMs < 45000;
+    }
+
+    return {
+      id: session.id,
+      status: session.status,
+      startedAt: session.started_at,
+      endReason: session.end_reason,
+      peer: peerUser ? {
+        id: peerUser.id,
+        displayName: peerUser.display_name || 'Mahasiswa Semarang',
+        isKtmVerified: peerUser.verification_status === 'KTM_VERIFIED',
+        region: STRANGER_CAM_REGION,
+        isOnline,
+      } : undefined,
+    };
+  }
+
+  // ── Admin Telemetry & Moderation ────────────────────────────────────────────
+
+  /**
+   * Operational live sessions (Telemetry only, NO live video surveillance).
+   */
+  public static getAdminLiveSessions(): Array<{
+    id: string;
+    startedAt: string;
+    durationSeconds: number;
+    userAAnonId: string;
+    userBAnonId: string;
+    region: string;
+  }> {
+    const db = getDatabase();
+
+    const rows = db.prepare(`
+      SELECT id, started_at, user_a_id, user_b_id
+      FROM stranger_sessions
+      WHERE status = 'CONNECTED'
+      ORDER BY started_at DESC
+      LIMIT 50
+    `).all() as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      startedAt: r.started_at,
+      durationSeconds: Math.max(0, Math.floor((Date.now() - new Date(r.started_at).getTime()) / 1000)),
+      userAAnonId: `USER-${r.user_a_id.substring(0, 8)}`,
+      userBAnonId: `USER-${r.user_b_id.substring(0, 8)}`,
+      region: STRANGER_CAM_REGION,
+    }));
+  }
+
+  /**
+   * Get Stranger Cam moderation reports queue.
+   */
+  public static getAdminReports(): Array<{
+    id: string;
+    sessionId: string;
+    reporterAnonId: string;
+    reportedAnonId: string;
+    reason: string;
+    details: string | null;
+    status: string;
+    createdAt: string;
+  }> {
+    const db = getDatabase();
+
+    const rows = db.prepare(`
+      SELECT id, session_id, reporter_id, reported_user_id, reason, details, status, created_at
+      FROM stranger_reports
+      ORDER BY created_at DESC
+      LIMIT 100
+    `).all() as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      sessionId: r.session_id,
+      reporterAnonId: `USER-${r.reporter_id.substring(0, 8)}`,
+      reportedAnonId: `USER-${r.reported_user_id.substring(0, 8)}`,
+      reason: r.reason,
+      details: r.details,
+      status: r.status,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /**
+   * Get Stranger Cam safety and abuse events.
+   */
+  public static getAdminSafetyEvents(): Array<{
+    id: string;
+    sessionId: string;
+    userAnonId: string;
+    eventType: string;
+    riskScore: number;
+    payload: any;
+    createdAt: string;
+  }> {
+    const db = getDatabase();
+
+    const rows = db.prepare(`
+      SELECT id, session_id, user_id, event_type, risk_score, payload, created_at
+      FROM stranger_safety_events
+      ORDER BY created_at DESC
+      LIMIT 100
+    `).all() as any[];
+
+    return rows.map((r) => {
+      let parsed = null;
+      try {
+        parsed = r.payload ? JSON.parse(r.payload) : null;
+      } catch {
+        parsed = r.payload;
+      }
+      return {
+        id: r.id,
+        sessionId: r.session_id,
+        userAnonId: `USER-${r.user_id.substring(0, 8)}`,
+        eventType: r.event_type,
+        riskScore: r.risk_score,
+        payload: parsed,
+        createdAt: r.created_at,
+      };
+    });
+  }
+
+  /**
+   * Moderate/resolve a report.
+   */
+  public static resolveReport(
+    reportId: string,
+    action: 'RESOLVED' | 'DISMISSED' | 'BAN_USER',
+    adminNotes?: string
+  ): { success: boolean; message: string } {
+    const db = getDatabase();
+
+    const report = db.prepare('SELECT * FROM stranger_reports WHERE id = ?').get(reportId) as any;
+    if (!report) {
+      throw new Error('Report not found');
+    }
+
+    if (action === 'BAN_USER') {
+      db.prepare("UPDATE users SET status = 'BANNED', updated_at = datetime('now') WHERE id = ?").run(report.reported_user_id);
+      db.prepare("UPDATE stranger_reports SET status = 'RESOLVED' WHERE id = ?").run(reportId);
+      return { success: true, message: `Pelapor ditindak: Pengguna telah dibanned dari platform (${adminNotes || 'Pelanggaran keamanan'}).` };
+    }
+
+    db.prepare('UPDATE stranger_reports SET status = ? WHERE id = ?').run(
+      action === 'DISMISSED' ? 'DISMISSED' : 'RESOLVED',
+      reportId
+    );
+
+    return { success: true, message: `Laporan status diubah menjadi ${action}.` };
   }
 }
