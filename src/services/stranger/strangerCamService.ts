@@ -648,10 +648,20 @@ export class StrangerCamService {
       VALUES (?, ?, 'ACTIVE', ?, 'UNVERIFIED', 'FREE', datetime('now'), datetime('now'))
     `).run(newUserId, syntheticTg, isAdult);
 
-    db.prepare(`
-      INSERT INTO profiles (id, user_id, display_name, age, institution_id, study_field, is_active, created_at, updated_at)
-      VALUES (?, ?, ?, 20, 'inst-undip', 'Semarang Student', 1, datetime('now'), datetime('now'))
-    `).run(uuidv4(), newUserId, alias);
+    // Guarantee default institution exists to prevent foreign key errors in fresh/serverless environments
+    try {
+      db.prepare(`
+        INSERT OR IGNORE INTO institutions (id, name, short_name, type, campus_cluster, is_active)
+        VALUES ('inst-undip', 'Universitas Diponegoro', 'UNDIP', 'UNIVERSITY', 'Tembalang / Pleburan', 1)
+      `).run();
+
+      db.prepare(`
+        INSERT INTO profiles (id, user_id, display_name, age, institution_id, study_field, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, 20, 'inst-undip', 'Semarang Student', 1, datetime('now'), datetime('now'))
+      `).run(uuidv4(), newUserId, alias);
+    } catch (profileErr) {
+      console.warn('Stranger profile creation fallback notice:', profileErr);
+    }
 
     return {
       id: newUserId,

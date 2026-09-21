@@ -9,9 +9,9 @@ export function seedDatabase(customPath?: string): void {
   const countStmt = db.prepare('SELECT COUNT(*) as count FROM institutions');
   const countRow = countStmt.get() as { count: number };
 
-  if (countRow.count === 0) {
+  if (countRow.count < 33) {
     const insertInst = db.prepare(`
-      INSERT INTO institutions (id, name, short_name, type, campus_cluster, is_active)
+      INSERT OR IGNORE INTO institutions (id, name, short_name, type, campus_cluster, is_active)
       VALUES (?, ?, ?, ?, ?, 1)
     `);
 
