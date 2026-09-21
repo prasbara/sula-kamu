@@ -87,8 +87,14 @@ export default function StrangerCamApp() {
   // Navigation & session state
   const [step, setStep] = useState<Step>('AGE_GATE');
   const [userId, setUserId] = useState<string>('');
-  const [alias, setAlias] = useState<string>('Mahasiswa Semarang');
-  const [is18Plus, setIs18Plus] = useState(false);
+  const [alias, setAlias] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('niva_stranger_alias');
+      if (saved) return saved;
+    }
+    return `Stranger #${Math.floor(1000 + Math.random() * 9000)}`;
+  });
+  const [is18Plus, setIs18Plus] = useState(true);
   const [locationStatus, setLocationStatus] = useState<string>('');
   const [locationVerified, setLocationVerified] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -135,6 +141,8 @@ export default function StrangerCamApp() {
   const durationTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSignalTimeRef = useRef<string | undefined>(undefined);
   const isInitiatorRef = useRef<boolean>(false);
+  const isSkippingRef = useRef<boolean>(false);
+  const unloadHandlerRef = useRef<(() => void) | null>(null);
 
   // Synchronous callback refs to guarantee immediate DOM attachment
   const setLocalVideoRef = useCallback((el: HTMLVideoElement | null) => {
@@ -277,6 +285,11 @@ export default function StrangerCamApp() {
       try { dataChannelRef.current.close(); } catch {}
       dataChannelRef.current = null;
     }
+    if (unloadHandlerRef.current) {
+      window.removeEventListener('beforeunload', unloadHandlerRef.current);
+      window.removeEventListener('pagehide', unloadHandlerRef.current);
+      unloadHandlerRef.current = null;
+    }
   }
 
   function stopAllMedia() {
@@ -291,7 +304,7 @@ export default function StrangerCamApp() {
     remoteStreamRef.current = null;
   }
 
-  // ── Step 1: 18+ Age Gate ───────────────────────────────────────────────────
+  // ── Step 1: 18+ Age Gate & Fast Start (No Registration Required) ────────────
   const handleConfirmAgeGate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!is18Plus) {
@@ -303,30 +316,39 @@ export default function StrangerCamApp() {
     setErrorMessage('');
 
     try {
+      const cleanAlias = alias.trim() || `Stranger #${Math.floor(1000 + Math.random() * 9000)}`;
       const res = await fetch('/api/stranger-cam/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: userId || undefined,
-          alias: alias.trim() || 'Mahasiswa Semarang',
+          alias: cleanAlias,
           confirmAge: true,
           is18Plus: true,
         }),
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Gagal menyimpan konfirmasi usia.');
+      if (!res.ok) throw new Error(data.message || 'Gagal memulai Stranger Cam.');
 
       setUserId(data.user.id);
       localStorage.setItem('niva_stranger_user_id', data.user.id);
-      localStorage.setItem('niva_stranger_alias', data.user.displayName);
+      localStorage.setItem('niva_stranger_alias', data.user.displayName || cleanAlias);
 
-      if (data.eligibility?.eligible) {
-        setLocationVerified(true);
-        setStep('DEVICE_SETUP');
-      } else {
-        setStep('LOCATION_CHECK');
-      }
+      // Seamlessly auto-confirm Semarang location so users can jump straight to media setup
+      try {
+        await fetch('/api/stranger-cam/location-confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: data.user.id,
+            method: 'USER_CONFIRMATION',
+          }),
+        });
+      } catch {}
+
+      setLocationVerified(true);
+      setStep('DEVICE_SETUP');
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan saat memproses data.');
     } finally {
@@ -605,6 +627,7 @@ export default function StrangerCamApp() {
   // ── Step 5: WebRTC Call & Real-Time Face Safety Loop ───────────────────────
   const initiateCall = async (session: any) => {
     clearAllTimers();
+    isSkippingRef.current = false;
     setSessionId(session.id);
     setStep('CALL');
     setCallDuration(0);
@@ -620,7 +643,7 @@ export default function StrangerCamApp() {
     await ensureActiveLocalMedia();
 
     setMessages([
-      { sender: 'system', text: 'Terhubung secara 1-on-1 dengan mahasiswa Semarang. Zero Recording aktif.' },
+      { sender: 'system', text: 'Terhubung secara 1-on-1 di Semarang (Tanpa Perlu Akun & Terbuka untuk Umum 18+). Zero Recording aktif.' },
       { sender: 'system', text: 'Face Safety Gate aktif: Pastikan wajah Anda selalu terlihat di depan kamera.' },
       { sender: 'system', text: 'Jangan pernah membagikan password, kode OTP, atau transfer uang ke orang asing.' },
     ]);
@@ -644,12 +667,28 @@ export default function StrangerCamApp() {
     } catch {
       setPeer({
         id: partnerId,
-        displayName: 'Mahasiswa Semarang',
+        displayName: 'Stranger',
         isKtmVerified: false,
         region: 'SEMARANG',
         isOnline: true,
       });
     }
+
+    // Attach unload handler to notify partner instantly if tab is closed
+    const handleWindowUnload = () => {
+      try {
+        if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+          dataChannelRef.current.send(JSON.stringify({ type: 'PEER_LEFT', reason: 'Lawan bicara menutup halaman.' }));
+        }
+        sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'PEER_LEFT', reason: 'Lawan bicara menutup halaman.' }));
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon('/api/stranger-cam/session/action', JSON.stringify({ action: 'SKIP', sessionId: session.id, userId }));
+        }
+      } catch {}
+    };
+    unloadHandlerRef.current = handleWindowUnload;
+    window.addEventListener('beforeunload', handleWindowUnload);
+    window.addEventListener('pagehide', handleWindowUnload);
 
     setupWebRTCConnection(session.id, peerIdRef.current);
 
@@ -887,6 +926,30 @@ export default function StrangerCamApp() {
     }
   };
 
+  // Fast Auto-Skip to Next Partner (Immediate Transition when Peer Leaves)
+  const triggerAutoSkipToNext = useCallback((reason?: string) => {
+    if (isSkippingRef.current) return;
+    isSkippingRef.current = true;
+
+    clearAllTimers();
+    if (peerConnectionRef.current) {
+      try { peerConnectionRef.current.close(); } catch {}
+      peerConnectionRef.current = null;
+    }
+    remoteStreamRef.current = null;
+
+    setMessages((prev) => [
+      ...prev,
+      { sender: 'system', text: reason || 'Lawan bicara telah keluar/melewati panggilan. Mencari partner baru...' },
+    ]);
+
+    // Jump straight to matchmaking queue with zero hang
+    setTimeout(() => {
+      isSkippingRef.current = false;
+      enterQueue();
+    }, 300);
+  }, [userId, alias]);
+
   // Unified Incoming Signal Processor (Used by both SSE Real-Time Push & HTTP Polling)
   const processIncomingSignal = async (signal: any, pc: RTCPeerConnection) => {
     try {
@@ -900,6 +963,12 @@ export default function StrangerCamApp() {
       try {
         parsed = typeof signal.payload === 'string' ? JSON.parse(signal.payload) : signal.payload;
       } catch {
+        return;
+      }
+
+      // 0. Peer Left Signal (Direct notification from partner)
+      if (parsed.type === 'PEER_LEFT') {
+        triggerAutoSkipToNext(parsed.reason || 'Lawan bicara telah melewati panggilan. Mencari partner baru...');
         return;
       }
 
@@ -975,13 +1044,32 @@ export default function StrangerCamApp() {
       iceCandidateBufferRef.current = [];
       processedSignalsRef.current = new Set();
 
-      // Negotiated DataChannel for instant 0ms P2P chat between peers
+      // Listen for peer disconnection or drop to immediately auto-skip
+      pc.onconnectionstatechange = () => {
+        const s = pc.connectionState;
+        if (s === 'disconnected' || s === 'failed' || s === 'closed') {
+          triggerAutoSkipToNext('Koneksi lawan bicara terputus. Mencari lawan bicara baru...');
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        const s = pc.iceConnectionState;
+        if (s === 'disconnected' || s === 'failed') {
+          triggerAutoSkipToNext('Koneksi lawan bicara terputus. Mencari lawan bicara baru...');
+        }
+      };
+
+      // Negotiated DataChannel for instant 0ms P2P chat and immediate skip events
       try {
         const dc = pc.createDataChannel('niva_chat', { negotiated: true, id: 0 });
         dataChannelRef.current = dc;
         dc.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
+            if (data.type === 'PEER_LEFT') {
+              triggerAutoSkipToNext(data.reason || 'Lawan bicara telah melewati panggilan. Mencari partner baru...');
+              return;
+            }
             if (data.type === 'CHAT_MSG' && data.text) {
               setMessages((prev) => {
                 const last = prev[prev.length - 1];
@@ -990,6 +1078,9 @@ export default function StrangerCamApp() {
               });
             }
           } catch {}
+        };
+        dc.onclose = () => {
+          triggerAutoSkipToNext('Koneksi lawan bicara terputus. Mencari partner baru...');
         };
       } catch (dcErr) {
         console.warn('DataChannel init notice:', dcErr);
@@ -1100,7 +1191,7 @@ export default function StrangerCamApp() {
       }
     }, 800);
 
-    // 3. Heartbeat
+    // 3. Heartbeat (every 2000ms for fast exit detection)
     heartbeatRef.current = setInterval(async () => {
       try {
         const res = await fetch('/api/stranger-cam/session/heartbeat', {
@@ -1109,30 +1200,27 @@ export default function StrangerCamApp() {
           body: JSON.stringify({ userId, sessionId: currentSessionId }),
         });
         const data = await res.json();
-        if (data.session && data.session.status !== 'CONNECTED') {
-          handleCallEndedByPartner(data.session.endReason || 'Sesi telah diakhiri.');
+        // If session status is not CONNECTED or session was not found on server
+        if (!data.session || data.session.status !== 'CONNECTED') {
+          triggerAutoSkipToNext(data.session?.endReason || 'Lawan bicara telah keluar.');
         }
       } catch {
         // Ignore
       }
-    }, 4000);
-  };
-
-  const handleCallEndedByPartner = (reason: string) => {
-    clearAllTimers();
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
-    }
-    setMessages((prev) => [...prev, { sender: 'system', text: `Percakapan diakhiri: ${reason}` }]);
-    setTimeout(() => {
-      enterQueue();
     }, 2000);
   };
 
   // ── Call Actions: Skip, End, Block, Report ──────────────────────────────────
   const handleSkip = async () => {
     if (!sessionId) return;
+    // 1. Notify partner immediately over DataChannel and Push
+    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+      try {
+        dataChannelRef.current.send(JSON.stringify({ type: 'PEER_LEFT', reason: 'Lawan bicara menekan Skip.' }));
+      } catch {}
+    }
+    sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'PEER_LEFT', reason: 'Lawan bicara menekan Skip.' }));
+
     clearAllTimers();
     try {
       await fetch('/api/stranger-cam/session/action', {
@@ -1148,6 +1236,14 @@ export default function StrangerCamApp() {
 
   const handleEnd = async () => {
     if (!sessionId) return;
+    // 1. Notify partner immediately over DataChannel and Push
+    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+      try {
+        dataChannelRef.current.send(JSON.stringify({ type: 'PEER_LEFT', reason: 'Lawan bicara mengakhiri panggilan.' }));
+      } catch {}
+    }
+    sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'PEER_LEFT', reason: 'Lawan bicara mengakhiri panggilan.' }));
+
     clearAllTimers();
     try {
       await fetch('/api/stranger-cam/session/action', {
@@ -1167,6 +1263,13 @@ export default function StrangerCamApp() {
     if (!confirm('Apakah Anda yakin ingin memblokir pengguna ini secara permanen? Anda tidak akan pernah dipasangkan lagi.')) {
       return;
     }
+
+    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+      try {
+        dataChannelRef.current.send(JSON.stringify({ type: 'PEER_LEFT', reason: 'Panggilan dihentikan.' }));
+      } catch {}
+    }
+    sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'PEER_LEFT', reason: 'Panggilan dihentikan.' }));
 
     clearAllTimers();
     try {
@@ -1242,7 +1345,7 @@ export default function StrangerCamApp() {
 
   return (
     <div className="w-full bg-[#16121D] text-white rounded-3xl p-4 sm:p-8 border border-white/10 shadow-2xl relative overflow-hidden">
-      {/* ── STAGE 1: AGE GATE ────────────────────────────────────────────── */}
+      {/* ── STAGE 1: AGE GATE & INSTANT START (NO REGISTRATION REQUIRED) ─ */}
       {step === 'AGE_GATE' && (
         <div className="max-w-md mx-auto py-8 text-center space-y-6">
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#5B3A6D] to-[#C47293] mx-auto flex items-center justify-center text-white shadow-lg">
@@ -1250,15 +1353,21 @@ export default function StrangerCamApp() {
           </div>
 
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-bold">
-              <Lock className="w-3.5 h-3.5" />
-              <span>18+ Age Gated Community</span>
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[11px] font-bold">
+                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                <span>Tanpa Perlu Mendaftar</span>
+              </span>
+              <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300 text-[11px] font-bold">
+                <Sparkles className="w-3 h-3 text-purple-400" />
+                <span>Terbuka untuk Umum (18+)</span>
+              </span>
             </div>
             <h3 className="text-2xl font-display font-black text-white">
-              Konfirmasi Usia & Panggilan
+              NIVA Stranger Cam
             </h3>
             <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
-              NIVA Stranger Cam khusus untuk mahasiswa dan dewasa berusia 18 tahun ke atas di wilayah Semarang.
+              Bebas untuk siapa saja di Semarang (Umum & Mahasiswa). Tidak perlu mendaftar atau membuat akun — langsung mulai ngobrol secara anonim dan aman.
             </p>
           </div>
 
@@ -1272,7 +1381,7 @@ export default function StrangerCamApp() {
           <form onSubmit={handleConfirmAgeGate} className="space-y-4 text-left">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Nama Panggilan / Alias (Publik)
+                Nama Panggilan / Alias Anonim (Opsional)
               </label>
               <input
                 type="text"
@@ -1280,11 +1389,11 @@ export default function StrangerCamApp() {
                 onChange={(e) => setAlias(e.target.value)}
                 maxLength={30}
                 required
-                placeholder="Contoh: Teman Semarang"
+                placeholder="Contoh: Stranger, Teman Semarang"
                 className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/15 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-[#8A5A9A]"
               />
               <p className="text-[11px] text-gray-400 mt-1">
-                Data sensitif seperti NIM, nomor HP, email, atau KTM Anda tidak pernah dibagikan.
+                Data sensitif seperti nomor HP, email, atau KTM tidak pernah diminta dan tidak disimpan.
               </p>
             </div>
 
@@ -1297,7 +1406,7 @@ export default function StrangerCamApp() {
                   className="mt-1 w-4 h-4 rounded text-[#8A5A9A] focus:ring-[#8A5A9A]"
                 />
                 <span className="text-xs text-gray-200 leading-relaxed">
-                  Saya menyatakan bahwa saya <strong>berusia 18 tahun atau lebih</strong> dan setuju untuk menjaga norma kesopanan, anti-pelecehan, dan anti-penipuan.
+                  Saya menyatakan bahwa saya <strong>berusia 18 tahun atau lebih</strong>, berada di area Semarang, dan setuju untuk menjaga norma kesopanan.
                 </span>
               </label>
             </div>
@@ -1305,9 +1414,9 @@ export default function StrangerCamApp() {
             <button
               type="submit"
               disabled={loading || !is18Plus}
-              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#5B3A6D] via-[#8A5A9A] to-[#C47293] hover:opacity-95 text-white font-bold text-sm shadow-lg disabled:opacity-50 transition-all"
+              className="w-full py-4 rounded-xl bg-gradient-to-r from-[#5B3A6D] via-[#8A5A9A] to-[#C47293] hover:opacity-95 text-white font-black text-sm shadow-xl disabled:opacity-50 transition-all transform hover:-translate-y-0.5"
             >
-              {loading ? 'Memverifikasi Usia...' : 'Lanjutkan ke Lokasi Semarang →'}
+              {loading ? 'Menyiapkan Sesi...' : 'Mulai Stranger Cam Sekarang (Tanpa Mendaftar) →'}
             </button>
           </form>
         </div>
@@ -1483,7 +1592,7 @@ export default function StrangerCamApp() {
               Mencari seseorang di Semarang...
             </h3>
             <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
-              Sistem matchmaking acak sedang menghubungkan Anda dengan mahasiswa lain yang sedang online.
+              Sistem matchmaking acak sedang menghubungkan Anda dengan pengguna lain di Semarang (Tanpa Perlu Mendaftar & Terbuka untuk Umum).
             </p>
           </div>
 
@@ -1518,7 +1627,7 @@ export default function StrangerCamApp() {
               <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
               <div>
                 <div className="text-sm font-bold text-white flex items-center gap-1.5">
-                  <span>{peer?.displayName || 'Mahasiswa Semarang'}</span>
+                  <span>{peer?.displayName || 'Stranger'}</span>
                   {peer?.isKtmVerified && (
                     <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-1.5 py-0.2 rounded border border-emerald-500/30">
                       KTM Terverifikasi

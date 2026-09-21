@@ -371,7 +371,7 @@ export class StrangerCamService {
     return {
       success: true,
       status: 'QUEUED',
-      message: 'Mencari mahasiswa lain di Semarang yang sedang online...',
+      message: 'Mencari pengguna lain di Semarang yang sedang online...',
     };
   }
 
@@ -432,17 +432,14 @@ export class StrangerCamService {
     userId: string
   ): { success: boolean; message: string } {
     const db = getDatabase();
-    const session = db.prepare('SELECT * FROM stranger_sessions WHERE id = ?').get(sessionId) as any;
-
-    if (!session) return { success: false, message: 'Sesi tidak ditemukan.' };
-
     db.prepare(`
-      UPDATE stranger_sessions
-      SET status = 'SKIPPED',
-          ended_at = datetime('now'),
-          end_reason = ?
-      WHERE id = ?
-    `).run(`SKIPPED_BY_${userId}`, sessionId);
+      INSERT INTO stranger_sessions (id, user_a_id, user_b_id, status, started_at, ended_at, end_reason)
+      VALUES (?, ?, 'ANON_PEER', 'SKIPPED', datetime('now'), datetime('now'), ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = 'SKIPPED',
+        ended_at = datetime('now'),
+        end_reason = excluded.end_reason
+    `).run(sessionId, userId, `SKIPPED_BY_${userId}`);
 
     return { success: true, message: 'Panggilan dilewati.' };
   }
@@ -547,12 +544,13 @@ export class StrangerCamService {
   ): { success: boolean; message: string } {
     const db = getDatabase();
     db.prepare(`
-      UPDATE stranger_sessions
-      SET status = 'ENDED',
-          ended_at = datetime('now'),
-          end_reason = ?
-      WHERE id = ?
-    `).run(`ENDED_BY_${userId}`, sessionId);
+      INSERT INTO stranger_sessions (id, user_a_id, user_b_id, status, started_at, ended_at, end_reason)
+      VALUES (?, ?, 'ANON_PEER', 'ENDED', datetime('now'), datetime('now'), ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = 'ENDED',
+        ended_at = datetime('now'),
+        end_reason = excluded.end_reason
+    `).run(sessionId, userId, `ENDED_BY_${userId}`);
 
     return { success: true, message: 'Percakapan selesai.' };
   }
@@ -662,7 +660,7 @@ export class StrangerCamService {
         }
         return {
           id: existing.id,
-          displayName: existing.display_name || 'Mahasiswa Semarang',
+          displayName: existing.display_name || 'Stranger',
           is18Plus: Boolean(existing.is_18_plus),
           isKtmVerified: existing.verification_status === 'KTM_VERIFIED',
         };
@@ -672,7 +670,7 @@ export class StrangerCamService {
     // Create a new participant record with synthetic Telegram ID for anonymous web stranger
     const newUserId = (opts.userId && opts.userId.trim().length > 0) ? opts.userId.trim() : uuidv4();
     const syntheticTg = `stranger_${uuidv4().substring(0, 12)}`;
-    const alias = (opts.alias || 'Teman Semarang').trim().substring(0, 30);
+    const alias = (opts.alias || 'Stranger').trim().substring(0, 30);
     const isAdult = opts.is18Plus ? 1 : 0;
 
     db.prepare(`
@@ -693,7 +691,7 @@ export class StrangerCamService {
 
       db.prepare(`
         INSERT INTO profiles (id, user_id, display_name, age, institution_id, study_field, is_active, created_at, updated_at)
-        VALUES (?, ?, ?, 20, 'inst-undip', 'Semarang Student', 1, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, 20, 'inst-undip', 'Semarang Resident / Umum', 1, datetime('now'), datetime('now'))
         ON CONFLICT(id) DO NOTHING
       `).run(uuidv4(), newUserId, alias);
     } catch (profileErr) {
@@ -907,7 +905,7 @@ export class StrangerCamService {
       endReason: session.end_reason,
       peer: peerUser ? {
         id: peerUser.id,
-        displayName: peerUser.display_name || 'Mahasiswa Semarang',
+        displayName: peerUser.display_name || 'Stranger',
         isKtmVerified: peerUser.verification_status === 'KTM_VERIFIED',
         region: STRANGER_CAM_REGION,
         isOnline,
