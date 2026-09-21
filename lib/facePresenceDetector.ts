@@ -98,12 +98,10 @@ export async function detectFacePresence(
       const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
       const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
 
-      // Indonesian skin tone color gamut (Fitzpatrick spectrum I - VI)
+      // Indonesian skin tone color gamut & broad indoor lighting tolerance (Fitzpatrick spectrum I - VI)
       const isSkin =
-        cb >= 77 && cb <= 135 &&
-        cr >= 130 && cr <= 178 &&
-        r > g && r > b &&
-        Math.abs(r - g) >= 12;
+        (cb >= 70 && cb <= 144 && cr >= 122 && cr <= 184 && r > 25) ||
+        (r > 40 && g > 25 && b > 15 && (r >= g || Math.abs(r - g) <= 12) && (r > b || Math.abs(r - b) <= 15));
 
       if (isSkin) {
         skinPixelCount++;
@@ -116,9 +114,10 @@ export async function detectFacePresence(
     const avgLuminance = totalLuminance / pixelCount;
     const isLowLight = avgLuminance < 28;
     const skinRatio = skinPixelCount / pixelCount;
+    const missingCutoff = isLowLight ? 0.006 : 0.010;
 
     // Camera covered, pitch black, or no skin pixels visible in frame
-    if (skinRatio < 0.03) {
+    if (skinRatio < missingCutoff) {
       return {
         status: 'FACE_MISSING',
         faceCount: 0,

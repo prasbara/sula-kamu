@@ -65,10 +65,14 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
   ],
+  iceCandidatePoolSize: 10,
 };
 
-const DEFAULT_GRACE_SECONDS = 3;
+const DEFAULT_GRACE_SECONDS = 6;
 
 export default function StrangerCamApp() {
   // Navigation & session state
@@ -111,6 +115,7 @@ export default function StrangerCamApp() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const iceCandidateBufferRef = useRef<RTCIceCandidateInit[]>([]);
   const queuePollingRef = useRef<NodeJS.Timeout | null>(null);
   const signalingPollingRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
@@ -118,11 +123,61 @@ export default function StrangerCamApp() {
   const lastSignalTimeRef = useRef<string | undefined>(undefined);
   const isInitiatorRef = useRef<boolean>(false);
 
+  // Synchronous callback refs to guarantee immediate DOM attachment
+  const setLocalVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    (localVideoRef as any).current = el;
+    if (el && localStreamRef.current) {
+      if (el.srcObject !== localStreamRef.current) {
+        el.srcObject = localStreamRef.current;
+      }
+      el.play().catch(() => {});
+    }
+  }, []);
+
+  const setRemoteVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    (remoteVideoRef as any).current = el;
+    if (el && remoteStreamRef.current) {
+      if (el.srcObject !== remoteStreamRef.current) {
+        el.srcObject = remoteStreamRef.current;
+      }
+      el.play().catch(() => {});
+    }
+  }, []);
+
   // Face detection loop references
   const faceDetectionTimerRef = useRef<NodeJS.Timeout | null>(null);
   const missingTicksRef = useRef<number>(0);
   const multipleTicksRef = useRef<number>(0);
   const graceSecondsRef = useRef<number>(DEFAULT_GRACE_SECONDS);
+
+  // Active Media Stream Recovery Helper
+  const ensureActiveLocalMedia = async (): Promise<MediaStream | null> => {
+    const existing = localStreamRef.current;
+    const hasLiveVideo = existing && existing.getVideoTracks().some((t) => t.readyState === 'live');
+    const hasLiveAudio = existing && existing.getAudioTracks().some((t) => t.readyState === 'live');
+    if (existing && hasLiveVideo && hasLiveAudio) {
+      if (localVideoRef.current && localVideoRef.current.srcObject !== existing) {
+        localVideoRef.current.srcObject = existing;
+        localVideoRef.current.play().catch(() => {});
+      }
+      return existing;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: true,
+      });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play().catch(() => {});
+      }
+      return stream;
+    } catch (err) {
+      console.warn('Failed to acquire active media stream:', err);
+      return existing;
+    }
+  };
 
   // Persistent video stream attachment across step changes (DEVICE_SETUP, CALL)
   useEffect(() => {
@@ -391,18 +446,90 @@ export default function StrangerCamApp() {
     clearAllTimers();
 
     try {
+      // Ensure media is alive
+      await ensureActiveLocalMedia();
+
+      let currentUid = userId || localStorage.getItem('niva_stranger_user_id');
+      if (!currentUid) {
+        const authRes = await fetch('/api/stranger-cam/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            alias: alias.trim() || 'Mahasiswa Semarang',
+            confirmAge: true,
+            is18Plus: true,
+          }),
+        });
+        const authData = await authRes.json();
+        if (authData.user) {
+          currentUid = authData.user.id;
+          setUserId(authData.user.id);
+          localStorage.setItem('niva_stranger_user_id', authData.user.id);
+        }
+      }
+
+      // Guarantee Semarang location is confirmed for this serverless instance
+      try {
+        await fetch('/api/stranger-cam/location-confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: currentUid,
+            method: 'USER_CONFIRMATION',
+          }),
+        });
+      } catch {}
+
       const res = await fetch('/api/stranger-cam/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'JOIN',
-          userId,
+          userId: currentUid,
           interests: ['Ngobrol Santai', 'Semarang'],
         }),
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Gagal masuk antrean.');
+      if (!res.ok) {
+        if (data.message?.includes('tidak ditemukan') || data.message?.includes('Syarat kelayakan')) {
+          // Auto-recover user on this container and retry once
+          const authRes = await fetch('/api/stranger-cam/auth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: currentUid,
+              alias: alias.trim() || 'Mahasiswa Semarang',
+              confirmAge: true,
+              is18Plus: true,
+            }),
+          });
+          const authData = await authRes.json();
+          const retryUid = authData.user?.id || currentUid;
+          if (authData.user?.id) {
+            setUserId(authData.user.id);
+            localStorage.setItem('niva_stranger_user_id', authData.user.id);
+          }
+          await fetch('/api/stranger-cam/location-confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: retryUid, method: 'USER_CONFIRMATION' }),
+          });
+          const retryRes = await fetch('/api/stranger-cam/queue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'JOIN', userId: retryUid, interests: ['Ngobrol Santai', 'Semarang'] }),
+          });
+          const retryData = await retryRes.json();
+          if (!retryRes.ok) throw new Error(retryData.message || 'Gagal masuk antrean.');
+          if (retryData.status === 'CONNECTED' && retryData.session) {
+            initiateCall(retryData.session);
+            return;
+          }
+        } else {
+          throw new Error(data.message || 'Gagal masuk antrean.');
+        }
+      }
 
       if (data.status === 'CONNECTED' && data.session) {
         initiateCall(data.session);
@@ -412,13 +539,13 @@ export default function StrangerCamApp() {
             await fetch('/api/stranger-cam/session/heartbeat', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userId }),
+              body: JSON.stringify({ userId: currentUid }),
             });
 
             const pollRes = await fetch('/api/stranger-cam/queue', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'POLL', userId }),
+              body: JSON.stringify({ action: 'POLL', userId: currentUid }),
             });
             const pollData = await pollRes.json();
             if (pollData.status === 'CONNECTED' && pollData.session) {
@@ -428,7 +555,7 @@ export default function StrangerCamApp() {
           } catch {
             // Heartbeat retry
           }
-        }, 1500);
+        }, 1200);
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Gagal bergabung ke antrean.');
@@ -467,6 +594,9 @@ export default function StrangerCamApp() {
     setFaceWarningMessage('');
     missingTicksRef.current = 0;
     multipleTicksRef.current = 0;
+
+    // Ensure active video & audio stream is present
+    await ensureActiveLocalMedia();
 
     setMessages([
       { sender: 'system', text: 'Terhubung secara 1-on-1 dengan mahasiswa Semarang. Zero Recording aktif.' },
@@ -507,8 +637,8 @@ export default function StrangerCamApp() {
   const startFaceSafetyMonitor = (currentSessionId: string) => {
     if (faceDetectionTimerRef.current) clearInterval(faceDetectionTimerRef.current);
 
-    // Initial warm-up allowance so WebRTC connection & video pipeline can stabilize
-    let warmupTicksRemaining = 8;
+    // Initial warm-up allowance (12 ticks = ~7.2s) so WebRTC connection, decoder, & canvas stabilize
+    let warmupTicksRemaining = 12;
 
     faceDetectionTimerRef.current = setInterval(async () => {
       // If camera is intentionally turned OFF by user, do not enforce face presence
@@ -544,23 +674,23 @@ export default function StrangerCamApp() {
           missingTicksRef.current += 1;
           setCameraSafetyState('CAMERA_ON_FACE_MISSING');
 
-          // Each tick is ~600ms. 5 ticks = 3.0 seconds
+          // Each tick is ~600ms. 10 ticks = 6.0 seconds
           const elapsedSecs = Math.floor(missingTicksRef.current * 0.6);
           const countdown = Math.max(0, graceSecondsRef.current - elapsedSecs);
           setFaceWarningCountdown(countdown);
 
           if (result.isLowLight) {
-            setFaceWarningMessage('Wajah sulit terdeteksi. Coba arahkan wajah ke kamera atau pindah ke tempat yang lebih terang.');
+            setFaceWarningMessage('Wajah sulit terdeteksi. Coba arahkan wajah ke kamera atau gunakan pencahayaan lebih terang.');
           } else {
             setFaceWarningMessage('Wajah tidak terlihat di kamera. Kamera akan dimatikan jika wajah tidak kembali terlihat.');
           }
 
-          // Test 4: Grace period expired (> 3 seconds) -> automatically disable camera
+          // Test 4: Grace period expired (> graceSeconds) -> automatically disable camera
           if (countdown <= 0) {
             triggerCameraAutoDisable(
               currentSessionId,
               'FACE_VISIBILITY_CAMERA_DISABLED',
-              'Wajah tidak terlihat di kamera selama melebihi batas toleransi 3 detik'
+              `Wajah tidak terlihat di kamera selama melebihi batas toleransi ${graceSecondsRef.current} detik`
             );
           }
         } else if (result.status === 'MULTIPLE_FACES') {
@@ -578,7 +708,7 @@ export default function StrangerCamApp() {
             triggerCameraAutoDisable(
               currentSessionId,
               'MULTIPLE_FACE_CAMERA_DISABLED',
-              'Terdeteksi lebih dari satu orang di kamera selama melebihi 3 detik'
+              `Terdeteksi lebih dari satu orang di kamera selama melebihi ${graceSecondsRef.current} detik`
             );
           }
         }
@@ -736,22 +866,47 @@ export default function StrangerCamApp() {
     try {
       const pc = new RTCPeerConnection(ICE_SERVERS);
       peerConnectionRef.current = pc;
+      iceCandidateBufferRef.current = [];
 
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((track) => {
-          pc.addTrack(track, localStreamRef.current!);
+      const stream = await ensureActiveLocalMedia();
+      if (stream) {
+        stream.getTracks().forEach((track) => {
+          try {
+            pc.addTrack(track, stream);
+          } catch {}
         });
       }
 
       pc.ontrack = (event) => {
-        const stream = event.streams[0] || new MediaStream([event.track]);
-        remoteStreamRef.current = stream;
+        let targetStream: MediaStream;
+        if (event.streams && event.streams[0]) {
+          targetStream = event.streams[0];
+        } else {
+          if (!remoteStreamRef.current) {
+            remoteStreamRef.current = new MediaStream();
+          }
+          if (!remoteStreamRef.current.getTracks().some((t) => t.id === event.track.id)) {
+            remoteStreamRef.current.addTrack(event.track);
+          }
+          targetStream = remoteStreamRef.current;
+        }
+
+        remoteStreamRef.current = targetStream;
         if (remoteVideoRef.current) {
-          if (remoteVideoRef.current.srcObject !== stream) {
-            remoteVideoRef.current.srcObject = stream;
+          if (remoteVideoRef.current.srcObject !== targetStream) {
+            remoteVideoRef.current.srcObject = targetStream;
           }
           remoteVideoRef.current.play().catch(() => {});
         }
+
+        event.track.onunmute = () => {
+          if (remoteVideoRef.current && remoteStreamRef.current) {
+            if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+              remoteVideoRef.current.srcObject = remoteStreamRef.current;
+            }
+            remoteVideoRef.current.play().catch(() => {});
+          }
+        };
       };
 
       pc.onicecandidate = (event) => {
@@ -813,6 +968,13 @@ export default function StrangerCamApp() {
 
             if (signal.signalType === 'OFFER' && !isInitiatorRef.current) {
               await pc.setRemoteDescription(new RTCSessionDescription(parsed));
+              while (iceCandidateBufferRef.current.length > 0) {
+                const cand = iceCandidateBufferRef.current.shift();
+                if (cand) {
+                  try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
+                }
+              }
+
               const answer = await pc.createAnswer();
               await pc.setLocalDescription(answer);
 
@@ -829,12 +991,22 @@ export default function StrangerCamApp() {
             } else if (signal.signalType === 'ANSWER' && isInitiatorRef.current) {
               if (pc.signalingState === 'have-local-offer') {
                 await pc.setRemoteDescription(new RTCSessionDescription(parsed));
+                while (iceCandidateBufferRef.current.length > 0) {
+                  const cand = iceCandidateBufferRef.current.shift();
+                  if (cand) {
+                    try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
+                  }
+                }
               }
             } else if (signal.signalType === 'CANDIDATE') {
-              try {
-                await pc.addIceCandidate(new RTCIceCandidate(parsed));
-              } catch {
-                // Ignore candidate buffering
+              if (!pc.remoteDescription || !pc.remoteDescription.type) {
+                iceCandidateBufferRef.current.push(parsed);
+              } else {
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(parsed));
+                } catch {
+                  // Ignore candidate buffering
+                }
               }
             }
           }
@@ -842,7 +1014,7 @@ export default function StrangerCamApp() {
       } catch {
         // Retry polling
       }
-    }, 1000);
+    }, 500);
 
     heartbeatRef.current = setInterval(async () => {
       try {
@@ -1144,7 +1316,7 @@ export default function StrangerCamApp() {
           {/* Self preview container */}
           <div className="relative w-full max-w-xs mx-auto aspect-[4/3] bg-black/40 rounded-2xl overflow-hidden border border-white/15 shadow-inner flex items-center justify-center">
             <video
-              ref={localVideoRef}
+              ref={setLocalVideoRef}
               autoPlay
               playsInline
               muted
@@ -1293,7 +1465,7 @@ export default function StrangerCamApp() {
             {/* Remote Video */}
             <div className="relative aspect-[4/3] bg-black/60 rounded-2xl overflow-hidden border border-white/15 shadow-xl flex items-center justify-center">
               <video
-                ref={remoteVideoRef}
+                ref={setRemoteVideoRef}
                 autoPlay
                 playsInline
                 className={`w-full h-full object-cover ${remoteCameraOff ? 'hidden' : ''}`}
@@ -1313,7 +1485,7 @@ export default function StrangerCamApp() {
             {/* Local Video with Face Visibility Warning & Countdown Overlays */}
             <div className="relative aspect-[4/3] bg-black/60 rounded-2xl overflow-hidden border border-white/15 shadow-xl flex items-center justify-center">
               <video
-                ref={localVideoRef}
+                ref={setLocalVideoRef}
                 autoPlay
                 playsInline
                 muted

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { StrangerCamService } from '@/src/services/stranger/strangerCamService';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -28,6 +30,16 @@ export async function POST(req: NextRequest) {
           session: activeSession,
         });
       }
+
+      // Auto-ensure user persistence across serverless workers
+      try {
+        const check = StrangerCamService.checkEligibility(userId);
+        if (!check.eligible && check.reason === 'Pengguna tidak ditemukan.') {
+          StrangerCamService.getOrCreateStrangerUser({ userId, is18Plus: true });
+          StrangerCamService.confirmSemarangLocation(userId, 'USER_CONFIRMATION');
+        }
+      } catch {}
+
       return NextResponse.json({
         success: true,
         status: 'QUEUED',

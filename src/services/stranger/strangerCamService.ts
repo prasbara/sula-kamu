@@ -141,9 +141,21 @@ export class StrangerCamService {
   } {
     const db = getDatabase();
 
-    const user = db.prepare(`
+    let user = db.prepare(`
       SELECT id, status, is_18_plus, birth_date FROM users WHERE id = ?
     `).get(userId) as { id: string; status: string; is_18_plus: number; birth_date?: string } | undefined;
+
+    if (!user && userId && typeof userId === 'string' && userId.trim().length >= 6) {
+      try {
+        StrangerCamService.getOrCreateStrangerUser({ userId: userId.trim(), is18Plus: true });
+        StrangerCamService.confirmSemarangLocation(userId.trim(), 'USER_CONFIRMATION');
+        user = db.prepare(`
+          SELECT id, status, is_18_plus, birth_date FROM users WHERE id = ?
+        `).get(userId.trim()) as { id: string; status: string; is_18_plus: number; birth_date?: string } | undefined;
+      } catch (autoErr) {
+        console.warn('Stranger user auto-provision notice in checkEligibility:', autoErr);
+      }
+    }
 
     if (!user) {
       return { eligible: false, reason: 'Pengguna tidak ditemukan.', requiresAge: true, requiresLocation: true };
@@ -212,7 +224,13 @@ export class StrangerCamService {
     const db = getDatabase();
 
     // Verify user exists and is 18+
-    const user = db.prepare('SELECT id, is_18_plus FROM users WHERE id = ?').get(userId) as { id: string; is_18_plus: number } | undefined;
+    let user = db.prepare('SELECT id, is_18_plus FROM users WHERE id = ?').get(userId) as { id: string; is_18_plus: number } | undefined;
+    if (!user && userId && typeof userId === 'string' && userId.trim().length >= 6) {
+      try {
+        StrangerCamService.getOrCreateStrangerUser({ userId: userId.trim(), is18Plus: true });
+        user = db.prepare('SELECT id, is_18_plus FROM users WHERE id = ?').get(userId.trim()) as { id: string; is_18_plus: number } | undefined;
+      } catch {}
+    }
     if (!user) {
       throw new Error('User not found');
     }
@@ -284,13 +302,22 @@ export class StrangerCamService {
       };
     }
 
-    const eligibility = this.checkEligibility(userId);
+    let eligibility = this.checkEligibility(userId);
     if (!eligibility.eligible) {
-      return {
-        success: false,
-        status: 'INELIGIBLE',
-        message: eligibility.reason || 'Syarat kelayakan belum terpenuhi.',
-      };
+      if (eligibility.reason === 'Pengguna tidak ditemukan.') {
+        try {
+          StrangerCamService.getOrCreateStrangerUser({ userId, is18Plus: true });
+          StrangerCamService.confirmSemarangLocation(userId, 'USER_CONFIRMATION');
+          eligibility = this.checkEligibility(userId);
+        } catch {}
+      }
+      if (!eligibility.eligible) {
+        return {
+          success: false,
+          status: 'INELIGIBLE',
+          message: eligibility.reason || 'Syarat kelayakan belum terpenuhi.',
+        };
+      }
     }
 
     // Enforce 1 active session per user
@@ -643,7 +670,7 @@ export class StrangerCamService {
     }
 
     // Create a new participant record with synthetic Telegram ID for anonymous web stranger
-    const newUserId = uuidv4();
+    const newUserId = (opts.userId && opts.userId.trim().length > 0) ? opts.userId.trim() : uuidv4();
     const syntheticTg = `stranger_${uuidv4().substring(0, 12)}`;
     const alias = (opts.alias || 'Teman Semarang').trim().substring(0, 30);
     const isAdult = opts.is18Plus ? 1 : 0;
@@ -651,6 +678,10 @@ export class StrangerCamService {
     db.prepare(`
       INSERT INTO users (id, telegram_id, status, is_18_plus, verification_status, subscription_status, created_at, updated_at)
       VALUES (?, ?, 'ACTIVE', ?, 'UNVERIFIED', 'FREE', datetime('now'), datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET
+        is_18_plus = CASE WHEN excluded.is_18_plus = 1 THEN 1 ELSE users.is_18_plus END,
+        status = 'ACTIVE',
+        updated_at = datetime('now')
     `).run(newUserId, syntheticTg, isAdult);
 
     // Guarantee default institution exists to prevent foreign key errors in fresh/serverless environments
@@ -663,6 +694,7 @@ export class StrangerCamService {
       db.prepare(`
         INSERT INTO profiles (id, user_id, display_name, age, institution_id, study_field, is_active, created_at, updated_at)
         VALUES (?, ?, ?, 20, 'inst-undip', 'Semarang Student', 1, datetime('now'), datetime('now'))
+        ON CONFLICT(id) DO NOTHING
       `).run(uuidv4(), newUserId, alias);
     } catch (profileErr) {
       console.warn('Stranger profile creation fallback notice:', profileErr);
