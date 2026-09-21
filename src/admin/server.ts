@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config/index.js';
 import { getDatabase } from '../database/db.js';
@@ -195,6 +196,18 @@ export function createAdminApp(): express.Application {
     `).all();
 
     res.json({ verifications: rows });
+  });
+
+  // 2B. View temporary KTM image for review
+  app.get('/api/verifications/:id/image', requireRole(['VERIFICATION_REVIEWER', 'SUPER_ADMIN']), (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const filePath = path.join(config.UPLOADS_DIR, `ktm_review_${id}.webp`);
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Content-Type', 'image/webp');
+      res.sendFile(filePath);
+    } else {
+      res.status(404).json({ error: 'Foto KTM tidak ditemukan atau sudah dihapus sesuai batas retensi privasi' });
+    }
   });
 
   // 3. Resolve Verification (Approve / Reject)

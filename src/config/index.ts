@@ -36,4 +36,8 @@ export const config = {
   
   DAILY_LIKE_LIMIT_FREE: 30,
   REGION_SCOPE: 'Semarang',
+
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || '',
+  OPENROUTER_MODEL: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+  TELEGRAM_BOT_URL: process.env.NEXT_PUBLIC_TELEGRAM_BOT_URL || 'https://t.me/nivasocialmakingbot',
 };

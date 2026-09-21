@@ -5,6 +5,8 @@
 # Node modules & builds
 node_modules/
 dist/
+.next/
+out/
 
 # SQLite Database
 *.db

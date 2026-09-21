@@ -129,6 +129,27 @@ async function runSecurityTests() {
   const safePortraitCheck = await PhotoModerationService.inspectProfilePhoto(properPortrait);
   assert(safePortraitCheck.isApproved, 'Approves authentic student portrait with proper clothing');
 
+  // TEST 8: OpenRouter AI Vision KTM Validation Module
+  console.log('\n7. AI Vision KTM Verification & OCR Engine:');
+  const { AiKtmValidator } = await import('../src/services/verification/aiKtmValidator.js');
+  const dummyInstitution = {
+    id: 'inst-05',
+    name: 'Universitas Islam Sultan Agung',
+    short_name: 'UNISSULA',
+    email_domain: 'unissula.ac.id',
+    region: 'Semarang',
+    is_active: 1,
+  };
+
+  // Test 8a: Validator returns well-typed response
+  const aiTestResult = await AiKtmValidator.analyzeCard(properPortrait, dummyInstitution, 'Alden');
+  assert(
+    typeof aiTestResult.confidence === 'number' &&
+    ['VERIFIED', 'NEEDS_REVIEW', 'REJECTED'].includes(aiTestResult.verdict) &&
+    typeof aiTestResult.reason === 'string',
+    'AI KTM Validator produces well-structured verdict and confidence metrics'
+  );
+
   console.log(`\n=============================================`);
   console.log(`TEST SUMMARY: ${passed}/${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   console.log(`=============================================\n`);

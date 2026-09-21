@@ -6,6 +6,7 @@ import { config } from '../../config/index.js';
 import { Institution, StudentVerification, User } from '../../types/index.js';
 import { ImageSanitizer, SanitizedImage } from './imageSanitizer.js';
 import { OCRAnalyzer, OCRAnalysisResult } from './ocrAnalyzer.js';
+import { AiKtmValidator, AiKtmValidationResult } from './aiKtmValidator.js';
 
 export interface VerificationSubmissionResult {
   success: boolean;
@@ -147,29 +148,59 @@ export class VerificationService {
       };
     }
 
-    // 6. OCR Text Extraction and Verification Scoring
-    let ocrResult: OCRAnalysisResult;
+    // 6. OpenRouter AI Vision + OCR Analysis
+    let finalStatus: 'VERIFIED' | 'NEEDS_REVIEW' | 'REJECTED' = 'NEEDS_REVIEW';
+    let extractedText = '';
+    let confidence = 0;
+    let reasonSummary = '';
+
+    // Step 6A: AI Vision Analysis with OpenRouter
+    let aiResult: AiKtmValidationResult | null = null;
     try {
-      ocrResult = await OCRAnalyzer.analyzeCard(sanitized.sanitizedBuffer, inst, declaredName);
+      aiResult = await AiKtmValidator.analyzeCard(sanitized.sanitizedBuffer, inst, declaredName);
+      if (aiResult) {
+        confidence = aiResult.confidence;
+        reasonSummary = `[AI Vision] ${aiResult.reason} (Confidence: ${aiResult.confidence}%)`;
+        extractedText = `Inst: ${aiResult.extractedInstitution || inst.name} | Nama: ${aiResult.extractedName || declaredName} | NIM: ${aiResult.extractedNim || '-'}`;
+
+        if (aiResult.verdict === 'VERIFIED') {
+          // AI verified it as genuine authentic KTM with high confidence (>= 85%)
+          finalStatus = 'VERIFIED';
+          reasonSummary = `[Auto-Verified AI] Kartu mahasiswa asli & terverifikasi resmi untuk ${inst.short_name} (Confidence: ${aiResult.confidence}%)`;
+        } else if (aiResult.verdict === 'REJECTED' && aiResult.isTamperedOrSuspicious) {
+          // Flagged as suspicious or tampered; hold for admin review rather than hard-failing immediately unless critical
+          finalStatus = 'NEEDS_REVIEW';
+          reasonSummary = `[AI Flagged Suspicious] Memerlukan verifikasi admin: ${aiResult.reason}`;
+        } else {
+          // Ambiguous / needs manual check
+          finalStatus = 'NEEDS_REVIEW';
+          reasonSummary = `[AI Review Needed] Memerlukan persetujuan admin: ${aiResult.reason}`;
+        }
+      }
     } catch (err: any) {
-      ocrResult = {
-        extractedText: '',
-        institutionMatchScore: 0,
-        nameMatchScore: 0,
-        hasSuspiciousKeywords: false,
-        suspiciousKeywordsFound: [],
-        overallConfidence: 0,
-        recommendedStatus: 'NEEDS_REVIEW',
-        reasonSummary: 'OCR analysis execution error, sent to manual review',
-      };
+      console.warn('AI Vision processing encountered error, falling back to OCR:', err.message);
+    }
+
+    // Step 6B: Fallback or complementary OCR analysis if AI is inconclusive or unavailable
+    if (!aiResult || aiResult.confidence === 0) {
+      try {
+        const ocrResult = await OCRAnalyzer.analyzeCard(sanitized.sanitizedBuffer, inst, declaredName);
+        extractedText = ocrResult.extractedText;
+        confidence = ocrResult.overallConfidence;
+        finalStatus = ocrResult.recommendedStatus;
+        reasonSummary = `[OCR Fallback] ${ocrResult.reasonSummary}`;
+      } catch (err: any) {
+        finalStatus = 'NEEDS_REVIEW';
+        reasonSummary = 'Analisa otomatis terkendala; dikirim ke antrean admin review';
+      }
     }
 
     const verificationId = uuidv4();
     const retentionExpiry = new Date(Date.now() + config.KTM_RETENTION_HOURS * 3600 * 1000).toISOString();
 
-    // 7. Save temporary sanitized image only if human review is needed (Section 5: privacy-safe retention)
+    // 7. Save temporary sanitized image if human review is needed (Section 5: privacy-safe retention)
     let tempStoragePath: string | null = null;
-    if (ocrResult.recommendedStatus === 'NEEDS_REVIEW') {
+    if (finalStatus === 'NEEDS_REVIEW') {
       const filename = `ktm_review_${verificationId}.webp`;
       tempStoragePath = path.join(config.UPLOADS_DIR, filename);
       fs.writeFileSync(tempStoragePath, sanitized.sanitizedBuffer);
@@ -185,11 +216,11 @@ export class VerificationService {
         WHERE user_id = ?
       `).run(
         inst.id,
-        ocrResult.recommendedStatus,
+        finalStatus,
         sanitized.sha256Hash,
-        ocrResult.extractedText.slice(0, 1000),
-        ocrResult.overallConfidence,
-        ocrResult.reasonSummary,
+        extractedText.slice(0, 1000),
+        confidence,
+        reasonSummary,
         retentionExpiry,
         userId
       );
@@ -203,17 +234,17 @@ export class VerificationService {
         verificationId,
         userId,
         inst.id,
-        ocrResult.recommendedStatus,
+        finalStatus,
         sanitized.sha256Hash,
-        ocrResult.extractedText.slice(0, 1000),
-        ocrResult.overallConfidence,
-        ocrResult.reasonSummary,
+        extractedText.slice(0, 1000),
+        confidence,
+        reasonSummary,
         retentionExpiry
       );
     }
 
     // 9. Update user status if auto-verified
-    if (ocrResult.recommendedStatus === 'VERIFIED') {
+    if (finalStatus === 'VERIFIED') {
       db.prepare("UPDATE users SET status = 'ACTIVE', updated_at = datetime('now') WHERE id = ?").run(userId);
       db.prepare("UPDATE student_verifications SET verified_at = datetime('now') WHERE user_id = ?").run(userId);
     }
@@ -226,31 +257,31 @@ export class VerificationService {
       uuidv4(),
       userId,
       sanitized.sha256Hash,
-      ocrResult.recommendedStatus === 'VERIFIED' ? 'SUCCESS' : ocrResult.recommendedStatus,
-      ocrResult.reasonSummary
+      finalStatus === 'VERIFIED' ? 'SUCCESS' : finalStatus,
+      reasonSummary
     );
 
-    if (ocrResult.recommendedStatus === 'VERIFIED') {
+    if (finalStatus === 'VERIFIED') {
       return {
         success: true,
         status: 'VERIFIED',
-        userFacingMessage: `Selamat! Kartu mahasiswa Anda berhasil diverifikasi untuk kampus ${inst.short_name}. Akun Anda kini aktif.`,
+        userFacingMessage: `🎉 Selamat! Kartu mahasiswa Anda berhasil diverifikasi otomatis oleh AI untuk kampus ${inst.short_name}. Akun Anda kini aktif.`,
         verificationId,
       };
-    } else if (ocrResult.recommendedStatus === 'NEEDS_REVIEW') {
+    } else if (finalStatus === 'NEEDS_REVIEW') {
       return {
         success: true,
         status: 'NEEDS_REVIEW',
-        userFacingMessage: 'Kartu mahasiswa Anda telah diterima dan sedang dalam antrean verifikasi manual oleh tim reviewer. Kami akan mengabari Anda setelah selesai diperiksa.',
-        internalReason: ocrResult.reasonSummary,
+        userFacingMessage: '✅ Kartu mahasiswa Anda telah diterima. Kartu Anda sedang ditinjau oleh tim verifikator admin kami untuk memastikan keaslian. Kami akan segera mengabari Anda setelah selesai.',
+        internalReason: reasonSummary,
         verificationId,
       };
     } else {
       return {
         success: false,
         status: 'REJECTED',
-        userFacingMessage: 'Verifikasi kartu mahasiswa belum berhasil. Pastikan foto KTM terlihat jelas, tidak buram, dan nama sesuai dengan profil Anda.',
-        internalReason: ocrResult.reasonSummary,
+        userFacingMessage: 'Verifikasi kartu mahasiswa belum berhasil. Pastikan foto KTM asli, jelas, tidak terpotong, dan nama sesuai.',
+        internalReason: reasonSummary,
         verificationId,
       };
     }

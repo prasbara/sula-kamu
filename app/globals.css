@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #FAF8F6;
+  --color-primary: #5B3A6D;
+  --color-primary-hover: #4A2F59;
+  --color-primary-light: #F4EEF7;
+  --color-secondary: #8A5A9A;
+  --color-secondary-hover: #734882;
+  --color-accent: #E8B4C8;
+  --color-accent-light: #FAF0F4;
+  --color-text-default: #17151A;
+  --color-text-muted: #68626D;
+  --color-brand-success: #2D8C6A;
+  --color-brand-danger: #C94B5B;
+
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-display: var(--font-outfit), sans-serif;
+
+  --shadow-soft: 0 4px 20px -2px rgba(91, 58, 109, 0.06), 0 2px 6px -1px rgba(91, 58, 109, 0.04);
+  --shadow-card: 0 10px 30px -5px rgba(91, 58, 109, 0.08), 0 4px 10px -2px rgba(91, 58, 109, 0.04);
+  --shadow-hover: 0 20px 40px -10px rgba(91, 58, 109, 0.12), 0 8px 16px -4px rgba(91, 58, 109, 0.06);
+}
+
+:root {
+  --font-inter: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --font-outfit: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  color: #17151A;
+  background-color: #FAF8F6;
+  font-family: var(--font-inter);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+::selection {
+  background-color: #E8B4C8;
+  color: #17151A;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-outfit), var(--font-inter);
+  letter-spacing: -0.02em;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
