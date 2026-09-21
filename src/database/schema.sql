@@ -344,6 +344,25 @@ CREATE TABLE IF NOT EXISTS security_events (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 25. Real User Review System (Section 20 - 33)
+CREATE TABLE IF NOT EXISTS reviews (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+    review_text TEXT NOT NULL,
+    recommend INTEGER NOT NULL DEFAULT 1,
+    improvement_category TEXT CHECK(improvement_category IN ('MATCHING', 'DISCOVERY', 'VERIFICATION', 'TELEGRAM', 'WEBSITE', 'PREMIUM', 'SAFETY', 'PERFORMANCE', 'OTHER')),
+    status TEXT NOT NULL DEFAULT 'PENDING_REVIEW' CHECK(status IN ('PENDING_REVIEW', 'APPROVED', 'REJECTED')),
+    rejection_reason TEXT,
+    admin_response TEXT,
+    admin_response_at TEXT,
+    environment TEXT NOT NULL DEFAULT 'PRODUCTION' CHECK(environment IN ('PRODUCTION', 'TEST', 'STAGING')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- Performance & Integrity Indexes
 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_users_verification_status ON users(verification_status);
@@ -358,3 +377,6 @@ CREATE INDEX IF NOT EXISTS idx_likes_from_to ON likes(from_user_id, to_user_id);
 CREATE INDEX IF NOT EXISTS idx_matches_users ON matches(user_a_id, user_b_id);
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_user ON reviews(user_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(status);
+CREATE INDEX IF NOT EXISTS idx_reviews_rating ON reviews(rating);

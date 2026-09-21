@@ -39,10 +39,13 @@ export class MatchingService {
 
   /**
    * Determine daily like allowance based on user verification and subscription tier (Section 8 & 9)
-   * - Unverified (Level 0): 10 likes / day
-   * - Photo Verified (Level 1): 50 likes / day
-   * - Student Verified (KTM, Level 2): 50 likes / day
-   * - Premium Active: 100 likes / day
+   * Section 8 Verification Test Matrix:
+   * - Case A (FREE + PHOTO_ONLY): 10 discoveries/day
+   * - Case B (PREMIUM + PHOTO_ONLY): 10 discoveries/day (Premium features active)
+   * - Case C (FREE + KTM_VERIFIED): 50 discoveries/day
+   * - Case D (PREMIUM + KTM_VERIFIED): 50 discoveries/day (Premium features active)
+   * - Case E (PREMIUM + KTM_VERIFIED -> FREE + KTM_VERIFIED): 50/day remains active
+   * - Case F (PREMIUM + PHOTO_ONLY -> FREE + PHOTO_ONLY): 10/day
    */
   public static getUserDailyLikeAllowance(userId: string): number {
     const db = getDatabase();
@@ -52,21 +55,16 @@ export class MatchingService {
 
     if (!user) return 10;
 
-    if (user.subscription_status === 'PREMIUM_ACTIVE') {
-      return 100;
-    }
-
-    if (user.verification_status === 'KTM_VERIFIED' || user.verification_status === 'PHOTO_VERIFIED') {
+    // KTM_VERIFIED grants 50 discoveries/day (Cases C, D, E)
+    if (user.verification_status === 'KTM_VERIFIED') {
       return 50;
     }
 
-    // Check student_verifications table for legacy verified records
+    // Check student_verifications table for verified KTM status
     const ktm = db.prepare("SELECT status FROM student_verifications WHERE user_id = ? AND status = 'VERIFIED'").get(userId);
     if (ktm) return 50;
 
-    const photo = db.prepare("SELECT status FROM photo_verifications WHERE user_id = ? AND status = 'PHOTO_VERIFIED'").get(userId);
-    if (photo) return 50;
-
+    // PHOTO_ONLY (Cases A, B, F) or unverified: 10 discoveries/day
     return 10;
   }
 

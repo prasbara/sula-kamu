@@ -8,33 +8,43 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let dbInstance: DatabaseSync | null = null;
+let currentDbPath: string = config.DATABASE_PATH;
 
-export function getDatabase(): DatabaseSync {
-  if (!dbInstance) {
-    dbInstance = new DatabaseSync(config.DATABASE_PATH);
+export function getDatabase(customPath?: string): DatabaseSync {
+  const targetPath = customPath || process.env.DATABASE_PATH || config.DATABASE_PATH;
+  if (!dbInstance || currentDbPath !== targetPath) {
+    if (dbInstance) {
+      try { dbInstance.close(); } catch {}
+    }
+    currentDbPath = targetPath;
+    dbInstance = new DatabaseSync(targetPath);
     dbInstance.exec('PRAGMA foreign_keys = ON;');
     dbInstance.exec('PRAGMA journal_mode = WAL;');
   }
   return dbInstance;
 }
 
-export function initDatabase(): void {
-  const db = getDatabase();
+export function initDatabase(customPath?: string): void {
+  const db = getDatabase(customPath);
 
   // Run incremental column additions safely first if existing database is active
   const migrations = [
     "ALTER TABLE users ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'UNVERIFIED'",
     "ALTER TABLE users ADD COLUMN subscription_status TEXT NOT NULL DEFAULT 'FREE'",
     "ALTER TABLE users ADD COLUMN onboarding_completed_at TEXT",
+    "ALTER TABLE users ADD COLUMN environment TEXT NOT NULL DEFAULT 'PRODUCTION'",
     "ALTER TABLE subscriptions ADD COLUMN payment_id TEXT",
     "ALTER TABLE subscriptions ADD COLUMN plan_id TEXT",
     "ALTER TABLE subscriptions ADD COLUMN status TEXT DEFAULT 'ACTIVE'",
     "ALTER TABLE subscriptions ADD COLUMN starts_at TEXT",
     "ALTER TABLE subscriptions ADD COLUMN ends_at TEXT",
+    "ALTER TABLE subscriptions ADD COLUMN environment TEXT NOT NULL DEFAULT 'PRODUCTION'",
+    "ALTER TABLE payment_requests ADD COLUMN environment TEXT NOT NULL DEFAULT 'PRODUCTION'",
     "ALTER TABLE support_tickets ADD COLUMN type TEXT NOT NULL DEFAULT 'PREMIUM'",
     "ALTER TABLE support_tickets ADD COLUMN assigned_admin_id TEXT",
     "ALTER TABLE support_tickets ADD COLUMN internal_notes TEXT",
     "ALTER TABLE support_tickets ADD COLUMN closed_at TEXT",
+    "ALTER TABLE support_tickets ADD COLUMN environment TEXT NOT NULL DEFAULT 'PRODUCTION'",
     "ALTER TABLE admin_users ADD COLUMN totp_secret TEXT",
     "ALTER TABLE admin_users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0",
   ];
@@ -105,6 +115,7 @@ export function initDatabase(): void {
           priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK(priority IN ('LOW', 'NORMAL', 'HIGH', 'URGENT')),
           assigned_admin_id TEXT,
           internal_notes TEXT,
+          environment TEXT NOT NULL DEFAULT 'PRODUCTION',
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now')),
           closed_at TEXT,
@@ -119,6 +130,11 @@ export function initDatabase(): void {
       console.warn('support_tickets migration error:', e);
     }
   }
+
+  // Ensure environment column is present in support_tickets
+  try {
+    db.exec("ALTER TABLE support_tickets ADD COLUMN environment TEXT NOT NULL DEFAULT 'PRODUCTION'");
+  } catch {}
 }
 
 export function closeDatabase(): void {

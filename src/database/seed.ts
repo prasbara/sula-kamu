@@ -1,9 +1,9 @@
 import { getDatabase, initDatabase } from './db.js';
 import crypto from 'node:crypto';
 
-export function seedDatabase(): void {
-  initDatabase();
-  const db = getDatabase();
+export function seedDatabase(customPath?: string): void {
+  initDatabase(customPath);
+  const db = getDatabase(customPath);
 
   // 1. Seed Institutions
   const countStmt = db.prepare('SELECT COUNT(*) as count FROM institutions');

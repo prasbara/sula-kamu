@@ -8,11 +8,15 @@ import { seedDatabase } from '../src/database/seed.js';
 import { v4 as uuidv4 } from 'uuid';
 import sharp from 'sharp';
 
+import path from 'node:path';
+
 async function runSecurityTests() {
   console.log('--- STARTING SULA AUTOMATED SECURITY TEST SUITE ---');
-  initDatabase();
-  seedDatabase();
-  const db = getDatabase();
+  const TEST_DB = path.resolve(process.cwd(), 'data', 'sula_test.db');
+  process.env.DATABASE_PATH = TEST_DB;
+  initDatabase(TEST_DB);
+  seedDatabase(TEST_DB);
+  const db = getDatabase(TEST_DB);
 
   let passed = 0;
   let total = 0;
@@ -58,7 +62,7 @@ async function runSecurityTests() {
   // TEST 4: Verification Rate Limiting & Cooldown (Section 6)
   console.log('\n3. Verification Rate Limiting & Abuse Prevention:');
   const testUserId = uuidv4();
-  db.prepare("INSERT OR REPLACE INTO users (id, telegram_id, status) VALUES (?, ?, 'PENDING_VERIFICATION')").run(testUserId, `test-rate-${uuidv4().slice(0, 8)}`);
+  db.prepare("INSERT OR REPLACE INTO users (id, telegram_id, status, environment) VALUES (?, ?, 'PENDING_VERIFICATION', 'TEST')").run(testUserId, `test-rate-${uuidv4().slice(0, 8)}`);
   
   // Insert 3 past attempts
   for (let i = 0; i < 3; i++) {
@@ -189,7 +193,7 @@ async function runSecurityTests() {
   const photoVerifiedUserId = uuidv4();
   db.prepare("INSERT INTO users (id, telegram_id, status, verification_status) VALUES (?, ?, 'ACTIVE', 'PHOTO_VERIFIED')").run(photoVerifiedUserId, `photoverif-${photoVerifiedUserId.slice(0, 6)}`);
   const photoAllowance = MatchingService.getUserDailyLikeAllowance(photoVerifiedUserId);
-  assert(photoAllowance === 50, `Photo Verified user daily like allowance is 50 (actual: ${photoAllowance})`);
+  assert(photoAllowance === 10, `Photo Verified user daily like allowance is 10 (actual: ${photoAllowance})`);
 
   // 11c: KTM Verified user (Limit = 50)
   const ktmVerifiedUserId = uuidv4();

@@ -15,12 +15,23 @@ import {
   CheckCircle2,
   GraduationCap,
   Zap,
-  RotateCcw
+  RotateCcw,
+  Star,
+  MessageSquare
 } from 'lucide-react';
 import { SITE_CONFIG, SEMARANG_INSTITUTIONS, FIXED_INSTITUTION_COUNT } from '@/lib/constants';
 import LiveStatsBar from '@/components/LiveStatsBar';
+import { ReviewService } from '@/src/services/review/reviewService';
 
 export default function HomePage() {
+  let reviewsData = { reviews: [] as any[], total: 0 };
+  try {
+    reviewsData = ReviewService.getPublicReviews(3);
+  } catch (err) {
+    // Graceful fallback if database initializing
+    reviewsData = { reviews: [], total: 0 };
+  }
+
   const faqs = [
     {
       q: 'Apakah NIVA merupakan aplikasi resmi dari universitas di Semarang?',
@@ -306,7 +317,90 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 5. FAQ SECTION */}
+      {/* 5. GENUINE REVIEWS SECTION (Section 33) */}
+      <section className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto py-12">
+        <div className="text-center mb-10 space-y-3">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#8A5A9A]/10 text-[#8A5A9A] text-xs font-bold">
+            <Star className="w-3.5 h-3.5 fill-[#8A5A9A]" />
+            <span>Transparansi & Ulasan Mahasiswa</span>
+          </div>
+          <h2 className="text-3xl sm:text-4xl font-display font-bold text-[#17151A] tracking-tight">
+            What students are saying
+          </h2>
+          <p className="text-sm sm:text-base text-[#68626D] max-w-xl mx-auto">
+            Pendapat dan pengalaman jujur dari mahasiswa Semarang yang telah terverifikasi di platform NIVA.
+          </p>
+        </div>
+
+        {reviewsData.reviews.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {reviewsData.reviews.map((rev) => (
+              <div
+                key={rev.id}
+                className="bg-white p-6 rounded-2xl border border-[#5B3A6D]/15 shadow-soft space-y-4 flex flex-col justify-between"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center gap-1 text-[#8A5A9A]">
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <Star
+                        key={s}
+                        className={`w-4 h-4 ${
+                          s <= rev.rating ? 'fill-[#8A5A9A] text-[#8A5A9A]' : 'text-gray-200'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-sm text-[#17151A] italic leading-relaxed">
+                    &quot;{rev.review_text}&quot;
+                  </p>
+                </div>
+                <div className="pt-4 border-t border-gray-100 flex items-center justify-between text-xs">
+                  <div>
+                    <p className="font-bold text-[#17151A]">{rev.display_name}</p>
+                    <p className="text-[#68626D]">{rev.institution_short_name || 'Mahasiswa Semarang'}</p>
+                  </div>
+                  <span className="text-[10px] text-[#2D8C6A] bg-[#2D8C6A]/10 px-2 py-0.5 rounded-full font-semibold">
+                    Verified
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-white p-10 rounded-2xl border border-dashed border-[#5B3A6D]/20 text-center max-w-2xl mx-auto space-y-4 shadow-soft">
+            <div className="w-12 h-12 rounded-full bg-[#8A5A9A]/10 text-[#8A5A9A] flex items-center justify-center mx-auto">
+              <MessageSquare className="w-6 h-6" />
+            </div>
+            <h3 className="text-lg font-bold text-[#17151A]">
+              Be among the first to share your NIVA experience.
+            </h3>
+            <p className="text-xs text-[#68626D] max-w-md mx-auto leading-relaxed">
+              NIVA berkomitmen untuk tidak pernah memalsukan ulasan atau merekayasa skor bintang demi promosi. Semua testimoni murni bersumber dari mahasiswa yang diverifikasi.
+            </p>
+            <div className="pt-2">
+              <Link
+                href="/reviews"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#5B3A6D] text-white text-xs font-bold hover:bg-[#482D57] transition-all shadow-sm"
+              >
+                <span>Tulis Ulasan Pengalaman Anda</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+          </div>
+        )}
+
+        <div className="text-center pt-8">
+          <Link
+            href="/reviews"
+            className="inline-flex items-center gap-2 text-xs font-bold text-[#5B3A6D] hover:text-[#8A5A9A] transition-colors"
+          >
+            <span>Buka Halaman Ulasan Publik & Statistik Rating Lengkap</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+      </section>
+
+      {/* 6. FAQ SECTION */}
       <section className="px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto">
         <div className="text-center mb-16 space-y-4">
           <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#8A5A9A]">
