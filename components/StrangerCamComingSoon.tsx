@@ -134,7 +134,7 @@ export default function StrangerCamComingSoon() {
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl bg-gradient-to-r from-[#8A5A9A] via-[#C47293] to-[#E8B4C8] hover:opacity-95 text-[#17151A] font-extrabold text-sm shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-0.5 active:translate-y-0"
               >
                 <Video className="w-4 h-4 text-[#17151A]" />
-                <span>🎥 Masuk ke Stranger Cam Sekarang →</span>
+                <span>Masuk ke Stranger Cam Sekarang →</span>
               </Link>
               <button
                 onClick={() => setShowNotifyModal(true)}

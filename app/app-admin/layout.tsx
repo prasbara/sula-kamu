@@ -111,7 +111,7 @@ export default async function AdminLayout({
               href="/app-admin/stranger-cam"
               className="px-3 py-1.5 rounded-lg text-[#E8B4C8] hover:text-white bg-[#5B3A6D]/20 hover:bg-[#5B3A6D]/40 transition-colors whitespace-nowrap font-semibold border border-[#5B3A6D]/40"
             >
-              🎥 Stranger Cam
+              Stranger Cam
             </Link>
           </nav>
         </div>

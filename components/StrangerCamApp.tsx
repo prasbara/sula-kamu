@@ -1132,7 +1132,7 @@ export default function StrangerCamApp() {
                 disabled={loading}
                 className="w-full py-4 rounded-xl bg-gradient-to-r from-[#5B3A6D] via-[#8A5A9A] to-[#C47293] hover:opacity-95 text-white font-black text-sm shadow-xl transition-all transform hover:-translate-y-0.5"
               >
-                {loading ? 'Meminta Akses Media...' : '🎥 Nyalakan Kamera Preview & Cek Wajah →'}
+                {loading ? 'Meminta Akses Media...' : 'Nyalakan Kamera Preview & Cek Wajah →'}
               </button>
             ) : (
               <button

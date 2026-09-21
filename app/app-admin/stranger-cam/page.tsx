@@ -131,7 +131,7 @@ export default function AdminStrangerCamPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-display font-bold text-white tracking-tight flex items-center gap-2.5">
-            <span>🎥 Stranger Cam Operations</span>
+            <span>Stranger Cam Operations</span>
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-[#5B3A6D]/40 text-[#E8B4C8] border border-[#5B3A6D]/50">
               Live Module
             </span>
