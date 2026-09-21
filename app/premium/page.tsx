@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { 
   Sparkles, 
   CheckCircle2, 
@@ -156,7 +157,27 @@ export default function PremiumPage() {
   return (
     <div className="py-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto space-y-16">
       {/* Hero */}
-      <div className="text-center space-y-4 max-w-3xl mx-auto">
+      <div className="text-center space-y-5 max-w-3xl mx-auto">
+        <div className="flex justify-center">
+          <div className="inline-flex items-center gap-3 px-4 py-2 rounded-2xl bg-white shadow-soft border border-[#5B3A6D]/15">
+            <Image
+              src="/logo-icon.png"
+              alt="NIVA Logo"
+              width={36}
+              height={36}
+              className="object-contain"
+            />
+            <div className="text-left">
+              <span className="font-display font-bold text-xl tracking-tight text-[#3B123F] block leading-tight">
+                NIVA
+              </span>
+              <span className="text-[10px] tracking-wider text-[#8A5A9A] font-semibold uppercase block">
+                Official Membership
+              </span>
+            </div>
+          </div>
+        </div>
+
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#5B3A6D]/10 text-[#5B3A6D] text-xs font-semibold">
           <Sparkles className="w-4 h-4 text-[#8A5A9A]" />
           <span>NIVA Premium Membership</span>

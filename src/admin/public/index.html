@@ -206,7 +206,8 @@
 <body>
   <!-- Top Navigation Header -->
   <header>
-    <div class="logo-badge">
+    <div class="logo-badge" style="display: flex; align-items: center; gap: 12px;">
+      <img src="/logo-icon.png" alt="NIVA" style="width: 32px; height: 32px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,0.06); padding: 2px;" />
       <span class="logo-text">NIVA</span>
       <span class="badge" id="adminRoleBadge">ADMIN CONSOLE</span>
     </div>
@@ -218,9 +219,13 @@
 
   <!-- Login Modal -->
   <div class="modal-overlay" id="loginModal">
-    <div class="modal-box" style="max-width: 400px;">
-      <div class="modal-header">Login Admin NIVA</div>
-      <div class="modal-body">
+    <div class="modal-box" style="max-width: 400px; text-align: center;">
+      <div style="margin: 8px auto 16px;">
+        <img src="/logo-clean.png" alt="NIVA" style="height: 64px; object-fit: contain; margin: 0 auto 8px;" />
+        <div style="font-size: 12px; color: var(--text-dim);">Meet someone worth knowing.</div>
+      </div>
+      <div class="modal-header" style="justify-content: center; border-top: 1px solid var(--border-color); padding-top: 16px;">Login Admin NIVA</div>
+      <div class="modal-body" style="text-align: left;">
         <form onsubmit="handleLogin(event)">
           <div class="form-group">
             <label>Username</label>

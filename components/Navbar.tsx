@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Menu, X, ShieldCheck, Send } from 'lucide-react';
 import { SITE_CONFIG } from '@/lib/constants';
 
@@ -13,12 +14,19 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-20">
           {/* Brand Logo & Descriptor */}
-          <Link href="/" className="flex items-center gap-3 group focus:outline-none focus:ring-2 focus:ring-primary rounded-lg p-1">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#5B3A6D] to-[#8A5A9A] flex items-center justify-center text-white font-bold text-xl shadow-md group-hover:scale-105 transition-transform">
-              N
+          <Link href="/" className="flex items-center gap-3 group focus:outline-none focus:ring-2 focus:ring-[#5B3A6D] rounded-lg p-1">
+            <div className="relative w-10 h-10 rounded-xl bg-white shadow-sm border border-[#5B3A6D]/15 flex items-center justify-center p-1 group-hover:scale-105 transition-transform overflow-hidden">
+              <Image
+                src="/logo-icon.png"
+                alt="NIVA Logo"
+                width={36}
+                height={36}
+                className="object-contain"
+                priority
+              />
             </div>
             <div className="flex flex-col">
-              <span className="font-display font-bold text-2xl tracking-tight text-[#17151A]">
+              <span className="font-display font-bold text-2xl tracking-tight text-[#3B123F]">
                 NIVA
               </span>
               <span className="text-[10px] tracking-wide text-[#68626D] font-medium hidden sm:inline-block">

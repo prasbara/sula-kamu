@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { ShieldCheck, HeartHandshake, Lock, ArrowUpRight } from 'lucide-react';
 import { SITE_CONFIG } from '@/lib/constants';
 
@@ -10,10 +11,16 @@ export default function Footer() {
           {/* Brand Info */}
           <div className="space-y-4 md:col-span-1">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-[#8A5A9A] to-[#E8B4C8] flex items-center justify-center text-white font-bold text-lg">
-                N
+              <div className="w-10 h-10 rounded-xl bg-white/10 p-1 flex items-center justify-center">
+                <Image
+                  src="/logo-icon.png"
+                  alt="NIVA Logo"
+                  width={34}
+                  height={34}
+                  className="object-contain"
+                />
               </div>
-              <span className="font-display font-bold text-2xl tracking-tight">NIVA</span>
+              <span className="font-display font-bold text-2xl tracking-tight text-white">NIVA</span>
             </div>
             <p className="text-sm text-gray-300 leading-relaxed font-normal">
               {SITE_CONFIG.descriptor}.

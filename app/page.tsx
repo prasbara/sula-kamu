@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { 
   ShieldCheck, 
   Send, 
@@ -50,8 +51,30 @@ export default function HomePage() {
   return (
     <div className="space-y-24 md:space-y-32 pb-24 overflow-hidden">
       {/* 1. HERO SECTION */}
-      <section className="relative pt-12 md:pt-20 pb-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-        <div className="text-center max-w-4xl mx-auto space-y-8">
+      <section className="relative pt-12 md:pt-18 pb-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div className="text-center max-w-4xl mx-auto space-y-7">
+          {/* Official Brand Identity Logo Presentation */}
+          <div className="flex justify-center animate-fadeIn">
+            <div className="inline-flex items-center gap-3.5 px-5 py-2.5 rounded-2xl bg-white shadow-soft border border-[#5B3A6D]/15 hover:border-[#5B3A6D]/30 transition-all hover:shadow-card">
+              <Image
+                src="/logo-icon.png"
+                alt="NIVA Logo"
+                width={44}
+                height={44}
+                className="object-contain"
+                priority
+              />
+              <div className="text-left">
+                <div className="font-display font-black text-2xl tracking-tight leading-none text-[#3B123F]">
+                  NIVA
+                </div>
+                <div className="text-[11px] font-medium text-[#8A5A9A] tracking-wider uppercase">
+                  Meet someone worth knowing.
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Tag Pill */}
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#5B3A6D]/10 border border-[#5B3A6D]/20 text-[#5B3A6D] text-xs sm:text-sm font-semibold tracking-wide">
             <Sparkles className="w-4 h-4 text-[#8A5A9A]" />
