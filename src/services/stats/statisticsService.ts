@@ -1,4 +1,5 @@
 import { getDatabase } from '../../database/db';
+import { NotifyService } from '../notification/notifyService';
 
 export interface PublicStats {
   studentsJoined: number;
@@ -22,7 +23,7 @@ export class StatisticsService {
       const countRow = db.prepare("SELECT COUNT(*) as count FROM users WHERE status = 'ACTIVE'").get() as {
         count: number;
       };
-      const initialTotal = Math.max(1, countRow.count);
+      const initialTotal = countRow.count;
 
       db.prepare(`
         INSERT INTO public_statistics (id, students_joined_total, updated_at)
@@ -67,6 +68,28 @@ export class StatisticsService {
           students_joined_total = students_joined_total + 1,
           updated_at = datetime('now')
       `).run();
+
+      // Trigger NotifyNIVABot notification asynchronously with safe failure isolation
+      try {
+        const profile = db.prepare(`
+          SELECT p.display_name, i.name as institution_name, u.verification_status 
+          FROM users u
+          LEFT JOIN profiles p ON p.user_id = u.id
+          LEFT JOIN institutions i ON i.id = p.institution_id
+          WHERE u.id = ?
+        `).get(userId) as { display_name?: string; institution_name?: string; verification_status?: string } | undefined;
+
+        const newTotal = this.getPublicStats().studentsJoined;
+        NotifyService.notifyNewUser({
+          userId,
+          name: profile?.display_name || 'New Student',
+          institutionName: profile?.institution_name || 'Semarang Campus',
+          verificationLevel: profile?.verification_status === 'KTM_VERIFIED' ? 'Student Verified (KTM)' : 'Photo Verified',
+          totalStudentsJoined: newTotal,
+        }).catch(() => {});
+      } catch {
+        // Notification failure must NEVER fail user onboarding
+      }
     }
 
     return this.getPublicStats().studentsJoined;

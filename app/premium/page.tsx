@@ -30,7 +30,7 @@ interface Plan {
 export default function PremiumPage() {
   const [selectedPlan, setSelectedPlan] = useState<'early_access' | 'early_launch'>('early_access');
   const [userIdInput, setUserIdInput] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'QRIS' | 'BANK_TRANSFER'>('QRIS');
+  const [paymentMethod] = useState<'QRIS'>('QRIS');
   const [activePayment, setActivePayment] = useState<any>(null);
   const [proofBase64, setProofBase64] = useState<string>('');
   const [proofFileName, setProofFileName] = useState<string>('');
@@ -73,14 +73,14 @@ export default function PremiumPage() {
         body: JSON.stringify({
           userId: userIdInput.trim(),
           planId: selectedPlan,
-          paymentMethod,
+          paymentMethod: 'QRIS',
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Gagal membuat tagihan.');
 
       setActivePayment(data.payment);
-      setSuccessMessage(`Tagihan #${data.payment.id} berhasil dibuat. Silakan lakukan pembayaran.`);
+      setSuccessMessage(`Tagihan #${data.payment.id} berhasil dibuat. Silakan lakukan pembayaran via QRIS.`);
     } catch (err: any) {
       setErrorMessage(err.message);
     } finally {
@@ -343,34 +343,19 @@ export default function PremiumPage() {
               </p>
             </div>
 
-            {/* Step 3: Payment Method */}
+            {/* Step 3: Payment Method (QRIS Only) */}
             <div className="space-y-3">
               <label className="block text-xs font-bold uppercase tracking-wider text-[#17151A]">
-                3. Metode Pembayaran
+                3. Metode Pembayaran (QRIS Resmi NIVA)
               </label>
-              <div className="grid grid-cols-2 gap-4">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('QRIS')}
-                  className={`p-4 rounded-xl border text-center font-semibold text-xs sm:text-sm transition-all ${
-                    paymentMethod === 'QRIS'
-                      ? 'border-[#5B3A6D] bg-[#5B3A6D] text-white'
-                      : 'border-[#5B3A6D]/20 text-[#17151A]'
-                  }`}
-                >
-                  QRIS (Gopay/OVO/Dana/BCA/ShopeePay)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('BANK_TRANSFER')}
-                  className={`p-4 rounded-xl border text-center font-semibold text-xs sm:text-sm transition-all ${
-                    paymentMethod === 'BANK_TRANSFER'
-                      ? 'border-[#5B3A6D] bg-[#5B3A6D] text-white'
-                      : 'border-[#5B3A6D]/20 text-[#17151A]'
-                  }`}
-                >
-                  Transfer Bank (BCA / Mandiri / BRI)
-                </button>
+              <div className="p-4 rounded-xl border border-[#5B3A6D] bg-[#5B3A6D]/5 flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-sm text-[#17151A]">QRIS Instan</span>
+                  <p className="text-xs text-[#68626D] mt-0.5">Mendukung GoPay, OVO, DANA, BCA, ShopeePay, LinkAja & Bank Lainnya</p>
+                </div>
+                <span className="px-2.5 py-1 rounded-full bg-[#5B3A6D] text-white text-xs font-bold">
+                  QRIS AKTIF
+                </span>
               </div>
             </div>
 
@@ -395,10 +380,10 @@ export default function PremiumPage() {
                 <strong className="text-xl text-[#17151A]">Rp{Number(activePayment.amount).toLocaleString('id-ID')}</strong>
               </div>
               <div className="space-y-2 text-xs text-[#68626D]">
-                <p><strong>Instruksi Pembayaran:</strong></p>
-                <p>1. Transfer sesuai nominal tepat ke Rekening Resmi NIVA: <strong>BCA 1234-5678-90</strong> (a.n. NIVA Platform) atau scan kode QRIS resmi.</p>
-                <p>2. Simpan struk bukti transfer atau screenshot bukti transaksi yang jelas.</p>
-                <p>3. Unggah bukti pembayaran melalui form di bawah ini.</p>
+                <p><strong>Instruksi Pembayaran QRIS:</strong></p>
+                <p>1. Scan QRIS resmi NIVA melalui aplikasi GoPay, OVO, DANA, BCA, ShopeePay atau e-wallet/m-banking Anda.</p>
+                <p>2. Pastikan nominal pembayaran tepat sebesar <strong>Rp{Number(activePayment.amount).toLocaleString('id-ID')}</strong>.</p>
+                <p>3. Simpan screenshot bukti transaksi berhasil, lalu unggah melalui formulir di bawah ini.</p>
               </div>
             </div>
 

@@ -1,12 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
-import fs from 'node:fs';
-import path from 'node:path';
 import { getDatabase } from '../../database/db';
 import { config } from '../../config/index';
 import { ImageSanitizer } from '../verification/imageSanitizer';
 import { ModerationService } from '../safety/moderationService';
 import { SupportService } from '../support/supportService';
 import { PaymentRequest, SubscriptionPlan } from '../../types/index';
+import { NotifyService } from '../notification/notifyService';
 
 export class PaymentService {
   /**
@@ -18,12 +17,12 @@ export class PaymentService {
   }
 
   /**
-   * Create a new payment request initiated from Website (Section 12 & 13)
+   * Create a new payment request initiated from Website (QRIS ONLY)
    */
   public static createPaymentRequest(
     userId: string,
     planId: string,
-    paymentMethod: 'QRIS' | 'BANK_TRANSFER' = 'QRIS'
+    paymentMethod: 'QRIS' = 'QRIS'
   ): PaymentRequest {
     const db = getDatabase();
 
@@ -44,22 +43,35 @@ export class PaymentService {
       throw new Error('INVALID_PLAN: Paket langganan tidak valid atau sudah tidak aktif.');
     }
 
-    // Generate formatted ID e.g. PAY-NIVA-XXXXXX
+    // Duplicate invoice protection: check for existing active unpaid invoice
+    const existingActive = db.prepare(`
+      SELECT * FROM payment_requests 
+      WHERE user_id = ? AND status IN ('PENDING', 'WAITING_PAYMENT') AND (expires_at IS NULL OR expires_at > datetime('now'))
+      ORDER BY created_at DESC LIMIT 1
+    `).get(userId) as PaymentRequest | undefined;
+
+    if (existingActive) {
+      return existingActive;
+    }
+
+    // Generate formatted ID e.g. INV-NIVA-YYYYMMDD-XXXXXX
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const randomSuffix = Math.floor(100000 + Math.random() * 900000);
-    const paymentId = `PAY-NIVA-${randomSuffix}`;
+    const paymentId = `INV-NIVA-${dateStr}-${randomSuffix}`;
     const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString(); // 24 hours deadline
 
     db.prepare(`
       INSERT INTO payment_requests (
         id, user_id, plan_id, amount, payment_method, status, expires_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, datetime('now'))
-    `).run(paymentId, userId, plan.id, plan.price, paymentMethod, expiresAt);
+      ) VALUES (?, ?, ?, ?, 'QRIS', 'PENDING', ?, datetime('now'))
+    `).run(paymentId, userId, plan.id, plan.price, expiresAt);
 
     return db.prepare('SELECT * FROM payment_requests WHERE id = ?').get(paymentId) as unknown as PaymentRequest;
   }
 
   /**
-   * Upload payment proof (Section 14: Validates MIME, magic bytes, dimensions)
+   * Upload payment proof (Validates MIME, magic bytes, dimensions; persists to Database BLOB/Base64)
+   * Eliminates any dependency on local filesystem
    */
   public static async submitPaymentProof(paymentId: string, rawBuffer: Buffer): Promise<void> {
     const db = getDatabase();
@@ -78,21 +90,33 @@ export class PaymentService {
     // Sanitize image & validate magic bytes
     const sanitized = await ImageSanitizer.sanitizeImage(rawBuffer);
 
-    // Save proof image securely
-    const paymentsDir = path.join(config.UPLOADS_DIR, 'payments');
-    if (!fs.existsSync(paymentsDir)) {
-      fs.mkdirSync(paymentsDir, { recursive: true });
-    }
+    // Save proof image directly into Database as base64 data URL — NO local filesystem writes!
+    const proofDataUrl = `data:image/webp;base64,${sanitized.sanitizedBuffer.toString('base64')}`;
+    const proofId = `prf_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-    const proofPath = path.join(paymentsDir, `proof_${paymentId}.webp`);
-    fs.writeFileSync(proofPath, sanitized.sanitizedBuffer);
+    db.prepare(`
+      INSERT INTO payment_proofs (
+        id, payment_id, user_id, proof_data, mime_type, size, uploaded_at, review_status
+      ) VALUES (?, ?, ?, ?, 'image/webp', ?, datetime('now'), 'PENDING')
+    `).run(proofId, paymentId, payment.user_id, proofDataUrl, sanitized.sanitizedBuffer.length);
 
     // Update status to UNDER_REVIEW (FIFO Queue entry)
     db.prepare(`
       UPDATE payment_requests 
-      SET status = 'UNDER_REVIEW', proof_image_path = ?, proof_submitted_at = datetime('now')
+      SET status = 'UNDER_REVIEW', proof_data = ?, proof_mime_type = 'image/webp', proof_submitted_at = datetime('now')
       WHERE id = ?
-    `).run(proofPath, paymentId);
+    `).run(proofDataUrl, paymentId);
+
+    // Trigger NotifyNIVABot notification asynchronously
+    try {
+      const plan = db.prepare('SELECT name FROM subscription_plans WHERE id = ?').get(payment.plan_id) as { name: string } | undefined;
+      NotifyService.notifyPaymentEvent('NEW_PAYMENT', {
+        paymentId,
+        userId: payment.user_id,
+        planName: plan?.name || 'Early Access',
+        amount: payment.amount,
+      }).catch(() => {});
+    } catch {}
   }
 
   /**
@@ -160,19 +184,37 @@ export class PaymentService {
           UPDATE payment_requests 
           SET status = 'APPROVED', reviewed_by = ?, reviewed_at = datetime('now'), review_notes = ?
           WHERE id = ?
-        `).run(reviewerId, notes || 'Bukti transfer/QRIS valid', paymentId);
+        `).run(reviewerId, notes || 'Bukti QRIS valid', paymentId);
 
-        // 2. Create/update active subscription (+30 days duration)
+        // Update payment_proofs review status
+        db.prepare(`
+          UPDATE payment_proofs 
+          SET review_status = 'APPROVED', reviewed_by = ?, reviewed_at = datetime('now')
+          WHERE payment_id = ?
+        `).run(reviewerId, paymentId);
+
+        // 2. Create/update active subscription (Extend if already active)
+        const existingSub = db.prepare(`
+          SELECT ends_at FROM subscriptions 
+          WHERE user_id = ? AND status = 'ACTIVE' AND ends_at > datetime('now')
+          ORDER BY ends_at DESC LIMIT 1
+        `).get(payment.user_id) as { ends_at: string } | undefined;
+
+        let startsAt = new Date().toISOString();
+        let baseTime = Date.now();
+        if (existingSub && new Date(existingSub.ends_at).getTime() > baseTime) {
+          startsAt = existingSub.ends_at;
+          baseTime = new Date(existingSub.ends_at).getTime();
+        }
+        const endsAt = new Date(baseTime + 30 * 24 * 3600 * 1000).toISOString();
         const subId = uuidv4();
-        const startsAt = new Date().toISOString();
-        const endsAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
 
         db.prepare(`
           INSERT INTO subscriptions (id, user_id, payment_id, plan_id, status, starts_at, ends_at)
           VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)
         `).run(subId, payment.user_id, paymentId, payment.plan_id, startsAt, endsAt);
 
-        // 3. Update user subscription status
+        // 3. Update user subscription status (verification status remains unchanged per Section 23)
         db.prepare(`
           UPDATE users 
           SET subscription_status = 'PREMIUM_ACTIVE', updated_at = datetime('now')
@@ -186,12 +228,13 @@ export class PaymentService {
           action: 'APPROVE_PAYMENT',
           targetResource: 'payment_requests',
           targetId: paymentId,
-          details: `Approved payment ${paymentId} (${payment.amount}) for user ${payment.user_id}. Premium activated for 30 days.`,
+          details: `Approved payment ${paymentId} (${payment.amount}) for user ${payment.user_id}. Premium active until ${endsAt}.`,
         });
 
         db.exec('COMMIT;');
 
-        // Section 24: Payment approval Telegram notification with exact backend expiry date
+        // User notification through linked Telegram account per Section 20
+        const plan = db.prepare('SELECT name FROM subscription_plans WHERE id = ?').get(payment.plan_id) as { name: string } | undefined;
         const formattedDate = new Date(endsAt).toLocaleDateString('id-ID', {
           day: 'numeric',
           month: 'long',
@@ -199,8 +242,19 @@ export class PaymentService {
         });
         SupportService.sendTelegramNotification(
           payment.user_id,
-          `✅ *Premium kamu sudah aktif sampai ${formattedDate}.*\n\nBatas harian like ditingkatkan menjadi 50 like/hari dengan prioritas rekomendasi.`
+          `✅ *NIVA Premium Aktif*\n\nPembayaran kamu telah diverifikasi oleh admin.\n\nPaket: ${plan?.name || 'Early Access'}\nDurasi: 30 hari\nAktif sampai: ${formattedDate}\n\nNikmati fitur Premium NIVA.`
         ).catch(() => {});
+
+        // Admin NotifyNIVABot notification
+        try {
+          NotifyService.notifyPaymentEvent('PAYMENT_APPROVED', {
+            paymentId,
+            userId: payment.user_id,
+            planName: plan?.name || 'Premium',
+            amount: payment.amount,
+            notes,
+          }).catch(() => {});
+        } catch {}
       } catch (err) {
         db.exec('ROLLBACK;');
         throw err;
@@ -213,6 +267,13 @@ export class PaymentService {
         WHERE id = ?
       `).run(reviewerId, notes || 'Bukti pembayaran tidak valid', paymentId);
 
+      // Update payment_proofs review status
+      db.prepare(`
+        UPDATE payment_proofs 
+        SET review_status = 'REJECTED', reviewed_by = ?, reviewed_at = datetime('now')
+        WHERE payment_id = ?
+      `).run(reviewerId, paymentId);
+
       ModerationService.logAudit({
         actorId: reviewerId,
         actorRole: 'PAYMENT_ADMIN',
@@ -222,11 +283,23 @@ export class PaymentService {
         details: `Rejected payment ${paymentId}. Reason: ${notes}`,
       });
 
-      // Telegram notification for payment rejection
+      // Telegram notification for payment rejection per Section 21
       SupportService.sendTelegramNotification(
         payment.user_id,
-        `⚠️ *Verifikasi pembayaran NIVA Premium belum berhasil.*\n\nAlasan: ${notes || 'Bukti transfer tidak valid'}. Silakan periksa kembali melalui menu bantuan website.`
+        `⚠️ *Pembayaran belum dapat diverifikasi*\n\nAlasan: ${notes || 'Bukti pembayaran belum jelas'}.\n\nSilakan kembali ke halaman Premium Support untuk mengirimkan bukti baru.`
       ).catch(() => {});
+
+      // Admin NotifyNIVABot notification
+      try {
+        const plan = db.prepare('SELECT name FROM subscription_plans WHERE id = ?').get(payment.plan_id) as { name: string } | undefined;
+        NotifyService.notifyPaymentEvent('PAYMENT_REJECTED', {
+          paymentId,
+          userId: payment.user_id,
+          planName: plan?.name || 'Premium',
+          amount: payment.amount,
+          notes,
+        }).catch(() => {});
+      } catch {}
     }
   }
 

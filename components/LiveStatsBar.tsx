@@ -5,14 +5,16 @@ import { Users, GraduationCap, ShieldCheck, Heart } from 'lucide-react';
 import { FIXED_INSTITUTION_COUNT } from '@/lib/constants';
 
 interface Stats {
-  studentsJoined: number;
+  studentsJoined: number | null;
   institutions: number;
+  isLive: boolean;
 }
 
 export default function LiveStatsBar() {
   const [stats, setStats] = useState<Stats>({
-    studentsJoined: 1247,
+    studentsJoined: null,
     institutions: FIXED_INSTITUTION_COUNT,
+    isLive: false,
   });
 
   useEffect(() => {
@@ -23,11 +25,12 @@ export default function LiveStatsBar() {
           setStats({
             studentsJoined: data.studentsJoined,
             institutions: data.institutions || FIXED_INSTITUTION_COUNT,
+            isLive: true,
           });
         }
       })
       .catch(() => {
-        // Fallback default
+        // Fallback default - keep null and not live
       });
   }, []);
 
@@ -40,10 +43,10 @@ export default function LiveStatsBar() {
             <span>Mahasiswa Terdaftar</span>
           </div>
           <p className="text-2xl sm:text-3xl font-display font-extrabold text-[#17151A]">
-            {stats.studentsJoined.toLocaleString('id-ID')}
+            {stats.studentsJoined !== null ? stats.studentsJoined.toLocaleString('id-ID') : '—'}
           </p>
-          <span className="text-[10px] text-[#2D8C6A] font-semibold bg-[#2D8C6A]/10 px-2 py-0.5 rounded-full">
-            ● Real Database Data
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${stats.isLive ? 'text-[#2D8C6A] bg-[#2D8C6A]/10' : 'text-[#68626D] bg-neutral-100'}`}>
+            {stats.isLive ? '● Live Database' : 'Live Database'}
           </span>
         </div>
 

@@ -458,9 +458,29 @@ export function createAdminServer() {
     }
   });
 
-  // GET /api/admin/payments/:id/proof (Secure payment proof viewer)
+  // GET /api/admin/payments/:id/proof (Secure payment proof viewer from database or disk)
   app.get('/api/admin/payments/:id/proof', requireRole(['PAYMENT_ADMIN', 'SUPER_ADMIN']), (req: Request, res: Response) => {
     const paymentId = req.params.id as string;
+    const db = getDatabase();
+    const proofRow = db.prepare('SELECT proof_data, mime_type FROM payment_proofs WHERE payment_id = ? ORDER BY uploaded_at DESC LIMIT 1').get(paymentId) as { proof_data?: string; mime_type?: string } | undefined;
+
+    if (proofRow?.proof_data) {
+      const cleanBase64 = proofRow.proof_data.replace(/^data:image\/[a-z]+;base64,/, '');
+      const buf = Buffer.from(cleanBase64, 'base64');
+      res.setHeader('Content-Type', proofRow.mime_type || 'image/webp');
+      res.send(buf);
+      return;
+    }
+
+    const payReq = db.prepare('SELECT proof_data, proof_mime_type FROM payment_requests WHERE id = ?').get(paymentId) as { proof_data?: string; proof_mime_type?: string } | undefined;
+    if (payReq?.proof_data) {
+      const cleanBase64 = payReq.proof_data.replace(/^data:image\/[a-z]+;base64,/, '');
+      const buf = Buffer.from(cleanBase64, 'base64');
+      res.setHeader('Content-Type', payReq.proof_mime_type || 'image/webp');
+      res.send(buf);
+      return;
+    }
+
     const proofPath = path.join(config.UPLOADS_DIR, 'payments', `proof_${paymentId}.webp`);
     if (fs.existsSync(proofPath)) {
       res.setHeader('Content-Type', 'image/webp');

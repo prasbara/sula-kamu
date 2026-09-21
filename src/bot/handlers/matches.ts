@@ -31,18 +31,46 @@ export class MatchesHandler {
   }
 
   /**
-   * Safety Action Bar rendered alongside chat messages
+   * Safety Action Bar rendered alongside chat messages.
+   * Phase-aware: shows "Lanjut Berkenalan" (private contact request) only after sandbox unlocks.
    */
-  public static getChatSafetyKeyboard(matchId: string, partnerUserId: string): InlineKeyboard {
-    return new InlineKeyboard()
-      .text('💬 Balas Pesan', `reply_msg_${matchId}`)
-      .row()
+  public static getChatSafetyKeyboard(
+    matchId: string,
+    partnerUserId: string,
+    phase: 'SANDBOX' | 'UNLOCKED' | 'TERMINATED' = 'SANDBOX',
+    minutesRemaining: number | null = null
+  ): InlineKeyboard {
+    const kb = new InlineKeyboard();
+
+    if (phase === 'TERMINATED') {
+      return kb
+        .text('🚫 Blokir', `block_user_${partnerUserId}`)
+        .text('🚨 Laporkan', `report_${partnerUserId}`)
+        .row()
+        .text('⬅️ Kembali ke Daftar Match', 'cmd_matches');
+    }
+
+    kb.text('💬 Balas Pesan', `reply_msg_${matchId}`).row();
+
+    if (phase === 'SANDBOX') {
+      const label = minutesRemaining !== null
+        ? `🛡️ Sandbox Aktif (${minutesRemaining} mnt lagi)`
+        : '🛡️ Status Sandbox';
+      kb.text(label, `sandbox_status_${matchId}`).row();
+    } else if (phase === 'UNLOCKED') {
+      // After sandbox: show private contact request button
+      kb.text('🤝 Lanjut Berkenalan (Tukar Kontak)', `req_private_${matchId}_${partnerUserId}`).row();
+    }
+
+    kb
       .text('🚫 Blokir', `block_user_${partnerUserId}`)
       .text('🚨 Laporkan', `report_${partnerUserId}`)
-      .text('👋 Batalkan Match', `unmatch_${matchId}`)
+      .text('👋 Unmatch', `unmatch_${matchId}`)
       .row()
       .text('🛡 Tips Keamanan', 'safety_tips_info')
-      .text('⬅️ Kembali ke Daftar Match', 'cmd_matches');
+      .text('⬅️ Matches', 'cmd_matches');
+
+    return kb;
   }
 
   public static getSafetyTipsText(): string {

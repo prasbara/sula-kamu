@@ -98,6 +98,18 @@ export class MatchingService {
       return [];
     }
 
+    // Enforce exclusive safe chat session lock
+    const lock = db.prepare(`
+      SELECT uel.session_id
+      FROM user_exclusive_locks uel
+      JOIN safe_chat_sessions scs ON scs.id = uel.session_id
+      WHERE uel.user_id = ? AND uel.released_at IS NULL AND scs.phase = 'SANDBOX'
+    `).get(userId);
+
+    if (lock) {
+      throw new Error('EXCLUSIVE_CHAT_ACTIVE: Kamu sedang ngobrol dengan satu match. Selesaikan sesi ini terlebih dahulu sebelum mencari match lain.');
+    }
+
     // Get current user's profile for compatibility scoring
     const myProfile = db.prepare('SELECT p.* FROM profiles p WHERE p.user_id = ?').get(userId) as Profile | undefined;
 
@@ -170,6 +182,19 @@ export class MatchingService {
    */
   public static handleLike(fromUserId: string, toUserId: string): LikeResult {
     const db = getDatabase();
+
+    // Enforce exclusive safe chat session lock
+    const lock = db.prepare(`
+      SELECT uel.session_id
+      FROM user_exclusive_locks uel
+      JOIN safe_chat_sessions scs ON scs.id = uel.session_id
+      WHERE uel.user_id = ? AND uel.released_at IS NULL AND scs.phase = 'SANDBOX'
+    `).get(fromUserId);
+
+    if (lock) {
+      throw new Error('EXCLUSIVE_CHAT_ACTIVE: Kamu sedang ngobrol dengan satu match. Selesaikan sesi ini terlebih dahulu sebelum mencari match lain.');
+    }
+
     const today = new Date().toISOString().split('T')[0];
     const { remaining, total, used } = this.getDailyLikesRemaining(fromUserId);
 
@@ -222,13 +247,13 @@ export class MatchingService {
         isMatch: true,
         matchId,
         matchedProfile: partner || undefined,
-        remainingLikes: remaining - 1,
+        remainingLikes: Math.max(0, remaining - 1),
       };
     }
 
     return {
       isMatch: false,
-      remainingLikes: remaining - 1,
+      remainingLikes: Math.max(0, remaining - 1),
     };
   }
 
@@ -237,6 +262,19 @@ export class MatchingService {
    */
   public static handlePass(fromUserId: string, toUserId: string): void {
     const db = getDatabase();
+
+    // Enforce exclusive safe chat session lock
+    const lock = db.prepare(`
+      SELECT uel.session_id
+      FROM user_exclusive_locks uel
+      JOIN safe_chat_sessions scs ON scs.id = uel.session_id
+      WHERE uel.user_id = ? AND uel.released_at IS NULL AND scs.phase = 'SANDBOX'
+    `).get(fromUserId);
+
+    if (lock) {
+      throw new Error('EXCLUSIVE_CHAT_ACTIVE: Selesaikan sesi dengan match saat ini terlebih dahulu.');
+    }
+
     db.prepare(`
       INSERT OR IGNORE INTO passes (id, from_user_id, to_user_id)
       VALUES (?, ?, ?)

@@ -47,6 +47,40 @@ export function initDatabase(customPath?: string): void {
     "ALTER TABLE support_tickets ADD COLUMN environment TEXT NOT NULL DEFAULT 'PRODUCTION'",
     "ALTER TABLE admin_users ADD COLUMN totp_secret TEXT",
     "ALTER TABLE admin_users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE payment_requests ADD COLUMN proof_data TEXT",
+    "ALTER TABLE payment_requests ADD COLUMN proof_mime_type TEXT",
+    `CREATE TABLE IF NOT EXISTS payment_proofs (
+      id TEXT PRIMARY KEY,
+      payment_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      storage_key TEXT,
+      proof_data TEXT,
+      mime_type TEXT NOT NULL,
+      original_filename TEXT,
+      size INTEGER NOT NULL,
+      uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+      review_status TEXT NOT NULL DEFAULT 'PENDING',
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      FOREIGN KEY(payment_id) REFERENCES payment_requests(id) ON DELETE CASCADE,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_exclusive_locks (
+      user_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      locked_at TEXT NOT NULL DEFAULT (datetime('now')),
+      released_at TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
+    "ALTER TABLE safe_chat_sessions ADD COLUMN active_seconds INTEGER DEFAULT 0",
+    "ALTER TABLE safe_chat_sessions ADD COLUMN last_both_active_at TEXT",
+    `CREATE TABLE IF NOT EXISTS user_presence (
+      user_id TEXT PRIMARY KEY,
+      last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
+      presence_status TEXT NOT NULL DEFAULT 'ACTIVE',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
   ];
 
   for (const sql of migrations) {

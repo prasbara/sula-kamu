@@ -10,10 +10,12 @@ export async function GET() {
     const stats = StatisticsService.getPublicStats();
     return NextResponse.json(stats);
   } catch (e) {
-    // Fallback if running on isolated serverless without local SQLite
+    console.error('Failed to fetch public statistics:', e);
+    // Never fallback to 1247 or fake numbers
     return NextResponse.json({
-      studentsJoined: 1247,
+      studentsJoined: null,
       institutions: FIXED_INSTITUTION_COUNT,
-    });
+      error: 'Data temporarily unavailable',
+    }, { status: 503 });
   }
 }

@@ -18,6 +18,7 @@ import { StatisticsService } from '../services/stats/statisticsService.js';
 import { PhotoVerificationService } from '../services/verification/photoVerificationService.js';
 import { SupportService } from '../services/support/supportService.js';
 import { PaymentService } from '../services/payment/paymentService.js';
+import { SafeChatService } from '../services/chat/safeChatService.js';
 
 export interface SessionData {
   step:
@@ -587,21 +588,82 @@ export function createBot(): Bot<MyContext> {
     const user = OnboardingHandler.getOrCreateUser(telegramId);
     const db = getDatabase();
 
-    // In-chat mediated messaging
+    // ── Safe Chat Sandbox: Mediated Messaging ────────────────────────────────
     if (ctx.session.step === 'AWAITING_CHAT_MESSAGE' && ctx.session.activeChatMatchId) {
       const matchId = ctx.session.activeChatMatchId;
+      const partnerId = ctx.session.activeChatPartnerId;
+
+      if (!partnerId) {
+        await ctx.reply('❌ Sesi chat tidak valid. Buka chat dari daftar Matches Anda.');
+        ctx.session.step = 'IDLE';
+        return;
+      }
+
       try {
-        const sanitized = ProfileHandler.sanitizeBio(text);
-        if (sanitized.hasSuspiciousPatterns) {
-          await ctx.reply('⚠️ Pesan mengandung nomor HP atau tautan eksternal. Demi keselamatan, gunakan obrolan internal SULA.');
+        const result = SafeChatService.sendSandboxMessage(matchId, user.id, partnerId, text);
+
+        if (!result.success) {
+          // Message was blocked by moderation
+          await ctx.reply(result.moderation.userMessage || '⚠️ Pesan Anda tidak dapat dikirimkan karena melanggar Community Guidelines NIVA.');
+
+          // Check if session was auto-terminated
+          if (result.sandboxPhase === 'TERMINATED') {
+            await ctx.reply(
+              '🚫 *Sesi Obrolan Dihentikan*\n\n' +
+              'Percakapan ini telah dihentikan secara otomatis karena terlalu banyak pelanggaran Community Guidelines.\n' +
+              'Silakan hubungi dukungan NIVA jika Anda merasa ini adalah kesalahan.',
+              { parse_mode: 'Markdown' }
+            );
+            ctx.session.step = 'IDLE';
+          }
+          // Keep step active so user can try again (unless terminated)
           return;
         }
 
-        MatchingService.sendMatchMessage(matchId, user.id, sanitized.cleanText);
-        await ctx.reply('✅ Pesan berhasil dikirim!');
+        // Message delivered — relay to partner via bot
+        const partnerUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(partnerId) as { telegram_id: string } | undefined;
+        const partnerProfile = MatchingService.getProfileByUserId(partnerId);
+        const myProfile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(user.id) as { display_name: string } | undefined;
+
+        if (partnerUser && partnerProfile) {
+          try {
+            await ctx.api.sendMessage(
+              parseInt(partnerUser.telegram_id),
+              `💬 *Pesan dari ${myProfile?.display_name ?? 'Teman NIVA'}*\n\n${text}\n\n` +
+              `_Balas melalui: Matches → Chat → Balas Pesan_`,
+              { parse_mode: 'Markdown' }
+            );
+          } catch {
+            // Partner may have blocked the bot — fail silently
+          }
+        }
+
+        // Build confirmation with sandbox status
+        let confirmText = '✅ Pesan terkirim!';
+        if (result.moderation.action === 'WARNED') {
+          confirmText += '\n' + (result.moderation.userMessage ?? '');
+        }
+
+        // Notify sender if sandbox just unlocked
+        if (result.sandboxJustUnlocked) {
+          confirmText += '\n\n🎉 *Fase obrolan aman 10 menit telah selesai!* Anda kini dapat meminta bertukar kontak Telegram secara aman melalui tombol di bawah.';
+        } else if (result.sandboxPhase === 'SANDBOX' && result.sandboxMinutesRemaining !== null) {
+          confirmText += `\n⏱ Fase sandbox: ${result.sandboxMinutesRemaining} menit lagi.`;
+        }
+
+        await ctx.reply(confirmText, {
+          parse_mode: 'Markdown',
+          reply_markup: MatchesHandler.getChatSafetyKeyboard(
+            matchId,
+            partnerId,
+            result.sandboxPhase,
+            result.sandboxMinutesRemaining
+          ),
+        });
         ctx.session.step = 'IDLE';
       } catch (err: any) {
         await ctx.reply(`❌ Gagal mengirim pesan: ${err.message}`);
+        ctx.session.step = 'IDLE';
       }
       return;
     }
@@ -684,25 +746,42 @@ export function createBot(): Bot<MyContext> {
     const telegramId = ctx.from.id.toString();
     const user = OnboardingHandler.getOrCreateUser(telegramId);
 
-    const remaining = MatchingService.getDailyLikesRemaining(user.id);
-    const queue = MatchingService.getDiscoveryQueue(user.id, 1);
+    try {
+      const remaining = MatchingService.getDailyLikesRemaining(user.id);
+      const queue = MatchingService.getDiscoveryQueue(user.id, 1);
 
-    if (queue.length === 0) {
-      await ctx.reply(
-        `✨ *Belum Ada Profil Baru Saat Ini*\n\n` +
-        `Anda telah melihat semua profil mahasiswa terverifikasi yang tersedia saat ini atau kuota discover telah terpenuhi.\n` +
-        `Silakan periksa kembali nanti!`,
-        {
-          reply_markup: new InlineKeyboard()
-            .text('💬 Lihat Matches Saya', 'cmd_matches')
-            .text('👤 Profil Saya', 'cmd_my_profile'),
-        }
-      );
-      return;
+      if (queue.length === 0) {
+        await ctx.reply(
+          `✨ *Belum Ada Profil Baru Saat Ini*\n\n` +
+          `Anda telah melihat semua profil mahasiswa terverifikasi yang tersedia saat ini atau kuota discover telah terpenuhi.\n` +
+          `Silakan periksa kembali nanti!`,
+          {
+            reply_markup: new InlineKeyboard()
+              .text('💬 Lihat Matches Saya', 'cmd_matches')
+              .text('👤 Profil Saya', 'cmd_my_profile'),
+          }
+        );
+        return;
+      }
+
+      const candidate = queue[0];
+      await DiscoveryHandler.sendCard(ctx, candidate, remaining.remaining);
+    } catch (err: any) {
+      if (err.message?.includes('EXCLUSIVE_CHAT_ACTIVE')) {
+        await ctx.reply(
+          `🔒 *Sesi Obrolan Sedang Berlangsung*\n\n` +
+          `Kamu sedang ngobrol dengan satu match.\n` +
+          `Selesaikan sesi ini terlebih dahulu sebelum mencari match lain.`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: new InlineKeyboard()
+              .text('💬 Buka Chat Match Saya', 'cmd_matches'),
+          }
+        );
+      } else {
+        await ctx.reply(`⚠️ ${err.message}`);
+      }
     }
-
-    const candidate = queue[0];
-    await DiscoveryHandler.sendCard(ctx, candidate, remaining.remaining);
   });
 
   // Like Callback
@@ -766,7 +845,7 @@ export function createBot(): Bot<MyContext> {
     });
   });
 
-  // Open Chat Room
+  // ── Open Chat Room (Sandbox-aware) ─────────────────────────────────────────
   bot.callbackQuery(/open_chat_(.+)/, async (ctx) => {
     const matchId = ctx.match[1];
     const telegramId = ctx.from.id.toString();
@@ -782,39 +861,189 @@ export function createBot(): Bot<MyContext> {
     const partnerId = match.user_a_id === user.id ? match.user_b_id : match.user_a_id;
     const partnerProfile = MatchingService.getProfileByUserId(partnerId);
 
-    // Fetch message history (last 5 messages)
-    const messages = db.prepare(`
-      SELECT * FROM messages WHERE match_id = ? ORDER BY created_at ASC LIMIT 10
-    `).all(matchId) as any[];
+    // Ensure sandbox session exists
+    const { phase, minutesRemaining, justUnlocked } = SafeChatService.checkPhase(matchId);
+    const session = SafeChatService.getOrCreateSession(matchId); // Ensure DB row exists
 
-    let chatText = `💬 *Ruang Obrolan Aman SULA*\n` +
-      `Dengan: *${partnerProfile?.displayName}* (${partnerProfile?.institutionShortName})\n\n`;
+    // Record presence heartbeat and acquire exclusive lock if in SANDBOX phase
+    SafeChatService.recordHeartbeat(user.id);
+    if (phase === 'SANDBOX') {
+      SafeChatService.acquireExclusiveLock(session.id, match.user_a_id, match.user_b_id);
+    }
+
+    // Fetch message history (last 10 messages)
+    const messages = SafeChatService.getChatHistory(matchId, 10);
+
+    // Build chat display
+    let chatText =
+      `💬 *Ruang Obrolan NIVA*\n` +
+      `Dengan: *${partnerProfile?.displayName ?? 'Teman NIVA'}* (${partnerProfile?.institutionShortName ?? 'Kampus'})\n\n`;
+
+    // Sandbox status banner
+    chatText += SafeChatService.getSandboxStatusBanner(phase, minutesRemaining) + '\n\n';
+    chatText += '─'.repeat(30) + '\n\n';
 
     if (messages.length === 0) {
       chatText += `_Belum ada pesan. Mulailah menyapa teman baru Anda!_\n\n`;
     } else {
       for (const m of messages) {
         const isMe = m.sender_id === user.id;
-        chatText += `${isMe ? '👤 Anda' : '💬 ' + partnerProfile?.displayName}: ${m.content}\n`;
+        const senderLabel = isMe ? '👤 Anda' : `💬 ${m.sender_name ?? partnerProfile?.displayName ?? 'Teman'}`;
+        const time = new Date(m.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        chatText += `${senderLabel} [${time}]: ${m.content}\n`;
       }
       chatText += '\n';
     }
 
-    chatText += `🔒 Obrolan dimediasi oleh platform SULA demi menjaga kerahasiaan nomor telepon & username Anda.`;
+    chatText += `🔒 _Obrolan dimediasi platform NIVA — identitas Telegram Anda terlindungi._`;
 
     await ctx.reply(chatText, {
       parse_mode: 'Markdown',
-      reply_markup: MatchesHandler.getChatSafetyKeyboard(matchId, partnerId),
+      reply_markup: MatchesHandler.getChatSafetyKeyboard(matchId, partnerId, phase, minutesRemaining),
     });
   });
 
-  // Reply message prompt
+  // ── Reply Message Prompt ─────────────────────────────────────────────────────
   bot.callbackQuery(/reply_msg_(.+)/, async (ctx) => {
     const matchId = ctx.match[1];
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+    const db = getDatabase();
+
+    // Determine partner
+    const match = db.prepare('SELECT * FROM matches WHERE id = ? AND is_active = 1').get(matchId) as any;
+    if (!match) {
+      await ctx.reply('❌ Match tidak ditemukan atau tidak aktif.');
+      return;
+    }
+
+    const partnerId = match.user_a_id === user.id ? match.user_b_id : match.user_a_id;
     ctx.session.activeChatMatchId = matchId;
+    ctx.session.activeChatPartnerId = partnerId;
     ctx.session.step = 'AWAITING_CHAT_MESSAGE';
 
-    await ctx.reply('✍️ Ketik balasan Anda lalu kirimkan:');
+    const { phase, minutesRemaining } = SafeChatService.checkPhase(matchId);
+    let promptText = '✍️ Ketik pesan Anda dan kirimkan:';
+    if (phase === 'SANDBOX') {
+      promptText += `\n\n🛡️ _Fase sandbox aktif (${minutesRemaining ?? '?'} menit lagi). Nomor HP, username, dan link diblokir otomatis._`;
+    }
+
+    await ctx.reply(promptText, { parse_mode: 'Markdown' });
+  });
+
+  // ── Request Private Contact Exchange ────────────────────────────────────────
+  bot.callbackQuery(/req_private_(.+)_(.+)/, async (ctx) => {
+    const matchId = ctx.match[1];
+    const partnerId = ctx.match[2];
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+
+    const result = SafeChatService.requestPrivateContact(matchId, user.id, partnerId);
+
+    if (!result.success) {
+      await ctx.reply(result.message, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    await ctx.reply(result.message, { parse_mode: 'Markdown' });
+
+    // Notify partner
+    const partnerUser = getDatabase().prepare('SELECT telegram_id FROM users WHERE id = ?').get(partnerId) as { telegram_id: string } | undefined;
+    const myProfile = getDatabase().prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(user.id) as { display_name: string } | undefined;
+    if (partnerUser && result.consentId) {
+      try {
+        await ctx.api.sendMessage(
+          parseInt(partnerUser.telegram_id),
+          `🤝 *Permintaan Bertukar Kontak*\n\n` +
+          `*${myProfile?.display_name ?? 'Teman Anda'}* ingin bertukar kontak Telegram dengan Anda secara pribadi.\n\n` +
+          `Dengan menyetujui, username Telegram Anda akan dibagikan kepada mereka — dan sebaliknya.\n` +
+          `Keputusan ini sepenuhnya pilihan Anda.`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: new InlineKeyboard()
+              .text('✅ Setuju Bertukar Kontak', `consent_accept_${result.consentId}`)
+              .row()
+              .text('❌ Tolak', `consent_decline_${result.consentId}`),
+          }
+        );
+      } catch {
+        // Partner may have blocked bot
+      }
+    }
+  });
+
+  // ── Accept/Decline Consent ───────────────────────────────────────────────────
+  bot.callbackQuery(/consent_accept_(.+)/, async (ctx) => {
+    const consentId = ctx.match[1];
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+
+    const result = SafeChatService.respondPrivateConsent(consentId, user.id, true);
+
+    if (!result.success) {
+      await ctx.reply(result.message);
+      return;
+    }
+
+    await ctx.reply(result.message, { parse_mode: 'Markdown' });
+
+    // Reveal usernames to both parties
+    const consent = result.consentRequest!;
+    const db = getDatabase();
+    const requesterUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(consent.requester_id) as { telegram_id: string } | undefined;
+    const responderUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(consent.responder_id) as { telegram_id: string } | undefined;
+    const requesterProfile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(consent.requester_id) as { display_name: string } | undefined;
+    const responderProfile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(consent.responder_id) as { display_name: string } | undefined;
+
+    const handoffNote =
+      `🎉 *Pertukaran Kontak Disetujui!*\n\n` +
+      `Anda kini dapat saling menghubungi secara pribadi.\n\n` +
+      `⚠️ _Ingat: Komunitas NIVA dibangun atas dasar rasa hormat dan keselamatan. ` +
+      `Lanjutkan interaksi dengan sopan dan penuh etika._`;
+
+    // Notify requester with responder's info
+    if (requesterUser && responderProfile) {
+      try {
+        await ctx.api.sendMessage(
+          parseInt(requesterUser.telegram_id),
+          handoffNote + `\n\nKontak teman Anda: *${responderProfile.display_name}* (Telegram: @${responderUser ? '...' : 'username_dirahasiakan'})`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch { /* silent */ }
+    }
+  });
+
+  bot.callbackQuery(/consent_decline_(.+)/, async (ctx) => {
+    const consentId = ctx.match[1];
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+
+    const result = SafeChatService.respondPrivateConsent(consentId, user.id, false);
+    await ctx.reply(result.message, { parse_mode: 'Markdown' });
+
+    // Notify requester of decline
+    if (result.consentRequest) {
+      const db = getDatabase();
+      const requesterUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(result.consentRequest.requester_id) as { telegram_id: string } | undefined;
+      if (requesterUser) {
+        try {
+          await ctx.api.sendMessage(
+            parseInt(requesterUser.telegram_id),
+            `ℹ️ Permintaan bertukar kontak Anda ditolak. Percakapan tetap dapat dilanjutkan di platform NIVA.`,
+          );
+        } catch { /* silent */ }
+      }
+    }
+  });
+
+  // ── Sandbox Status Viewer ─────────────────────────────────────────────────────
+  bot.callbackQuery(/sandbox_status_(.+)/, async (ctx) => {
+    const matchId = ctx.match[1];
+    const { phase, minutesRemaining } = SafeChatService.checkPhase(matchId);
+    await ctx.reply(
+      SafeChatService.getSandboxStatusBanner(phase, minutesRemaining),
+      { parse_mode: 'Markdown' }
+    );
   });
 
   // Block user callback
@@ -824,7 +1053,21 @@ export function createBot(): Bot<MyContext> {
     const user = OnboardingHandler.getOrCreateUser(telegramId);
 
     ModerationService.blockUser(user.id, targetUserId, 'Blocked via Safety Action Bar');
+    SafeChatService.releaseExclusiveLock(user.id);
+    SafeChatService.releaseExclusiveLock(targetUserId);
     await ctx.reply('🚫 Pengguna telah diblokir. Hubungan match dan percakapan telah ditutup.');
+  });
+
+  // Unmatch callback
+  bot.callbackQuery(/unmatch_(.+)/, async (ctx) => {
+    const matchId = ctx.match[1];
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+    const db = getDatabase();
+
+    db.prepare("UPDATE matches SET is_active = 0, unmatched_by = ?, updated_at = datetime('now') WHERE id = ?").run(user.id, matchId);
+    SafeChatService.releaseExclusiveLock(user.id);
+    await ctx.reply('👋 Anda telah mengakhiri obrolan dan unmatch dengan pengguna ini. Antrean discover Anda kembali terbuka.');
   });
 
   // Report Flow
@@ -852,6 +1095,8 @@ export function createBot(): Bot<MyContext> {
       category,
       evidenceText: 'Reported directly from chat / discovery action bar',
     });
+    SafeChatService.releaseExclusiveLock(user.id);
+    SafeChatService.releaseExclusiveLock(targetUserId);
 
     await ctx.reply(
       `✅ *Laporan Anda Telah Diterima*\n` +
