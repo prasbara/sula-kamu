@@ -4,7 +4,7 @@ import { Camera, Sparkles, ShieldCheck, MapPin, Users, Send, ArrowRight, Lock, E
 import { SITE_CONFIG } from '@/lib/constants';
 import JsonLd from '@/components/JsonLd';
 import StrangerCamComingSoon from '@/components/StrangerCamComingSoon';
-import StrangerCamApp from '@/components/StrangerCamApp';
+import StrangerCamClientWrapper from '@/components/StrangerCamClientWrapper';
 
 export const metadata: Metadata = {
   title: 'NIVA Stranger Cam — Random 1-on-1 Chat Mahasiswa Semarang',
@@ -91,7 +91,7 @@ export default function StrangerCamPage() {
     ],
   };
 
-  const isEnabled = process.env.STRANGER_CAM_ENABLED === 'true' || process.env.NEXT_PUBLIC_STRANGER_CAM_ENABLED === 'true';
+  const isEnabled = process.env.STRANGER_CAM_ENABLED !== 'false' && process.env.NEXT_PUBLIC_STRANGER_CAM_ENABLED !== 'false';
 
   return (
     <div className="py-12 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto space-y-16">
@@ -119,7 +119,7 @@ export default function StrangerCamPage() {
       {/* Real Application or Waitlist State */}
       {isEnabled ? (
         <div className="space-y-4">
-          <StrangerCamApp />
+          <StrangerCamClientWrapper />
         </div>
       ) : (
         <StrangerCamComingSoon />

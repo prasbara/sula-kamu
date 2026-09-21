@@ -39,30 +39,35 @@ export default function Navbar() {
           <nav className="hidden lg:flex items-center gap-1 xl:gap-2" aria-label="Main Navigation">
             <Link
               href="/how-it-works"
+              prefetch={true}
               className="px-2 xl:px-3 py-2 text-xs xl:text-sm font-medium text-[#68626D] hover:text-[#5B3A6D] hover:bg-[#5B3A6D]/5 rounded-lg transition-colors whitespace-nowrap"
             >
               Cara Kerja
             </Link>
             <Link
               href="/safety"
+              prefetch={true}
               className="px-2 xl:px-3 py-2 text-xs xl:text-sm font-medium text-[#68626D] hover:text-[#5B3A6D] hover:bg-[#5B3A6D]/5 rounded-lg transition-colors whitespace-nowrap"
             >
               Keamanan
             </Link>
             <Link
               href="/student-verification"
+              prefetch={true}
               className="px-2 xl:px-3 py-2 text-xs xl:text-sm font-medium text-[#68626D] hover:text-[#5B3A6D] hover:bg-[#5B3A6D]/5 rounded-lg transition-colors whitespace-nowrap"
             >
               Verifikasi KTM
             </Link>
             <Link
               href="/students/semarang"
+              prefetch={true}
               className="px-2 xl:px-3 py-2 text-xs xl:text-sm font-medium text-[#68626D] hover:text-[#5B3A6D] hover:bg-[#5B3A6D]/5 rounded-lg transition-colors whitespace-nowrap"
             >
               Kampus Semarang
             </Link>
             <Link
               href="/premium"
+              prefetch={true}
               className="px-2 xl:px-3 py-2 text-xs xl:text-sm font-semibold text-[#8A5A9A] hover:text-[#5B3A6D] hover:bg-[#8A5A9A]/10 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
               <span>Premium</span>
@@ -70,6 +75,7 @@ export default function Navbar() {
             </Link>
             <Link
               href="/stranger-cam"
+              prefetch={true}
               className="px-2.5 xl:px-3 py-1.5 xl:py-2 text-xs xl:text-sm font-semibold text-[#5B3A6D] bg-[#5B3A6D]/8 hover:bg-[#5B3A6D]/15 border border-[#5B3A6D]/20 rounded-lg xl:rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap"
             >
               <Video className="w-3.5 h-3.5 text-[#5B3A6D]" />
@@ -77,6 +83,7 @@ export default function Navbar() {
             </Link>
             <Link
               href="/blog"
+              prefetch={true}
               className="px-2 xl:px-3 py-2 text-xs xl:text-sm font-medium text-[#68626D] hover:text-[#5B3A6D] hover:bg-[#5B3A6D]/5 rounded-lg transition-colors whitespace-nowrap"
             >
               Blog
@@ -117,6 +124,7 @@ export default function Navbar() {
         <div className="lg:hidden border-b border-[#5B3A6D]/10 bg-[#FAF8F6] px-4 pt-2 pb-6 space-y-2 animate-fadeIn" id="mobile-menu">
           <Link
             href="/how-it-works"
+            prefetch={true}
             onClick={() => setIsOpen(false)}
             className="block px-3 py-2.5 rounded-lg text-base font-medium text-[#17151A] hover:bg-[#5B3A6D]/10"
           >
@@ -124,6 +132,7 @@ export default function Navbar() {
           </Link>
           <Link
             href="/safety"
+            prefetch={true}
             onClick={() => setIsOpen(false)}
             className="block px-3 py-2.5 rounded-lg text-base font-medium text-[#17151A] hover:bg-[#5B3A6D]/10"
           >
@@ -131,6 +140,7 @@ export default function Navbar() {
           </Link>
           <Link
             href="/student-verification"
+            prefetch={true}
             onClick={() => setIsOpen(false)}
             className="block px-3 py-2.5 rounded-lg text-base font-medium text-[#17151A] hover:bg-[#5B3A6D]/10"
           >
@@ -138,6 +148,7 @@ export default function Navbar() {
           </Link>
           <Link
             href="/students/semarang"
+            prefetch={true}
             onClick={() => setIsOpen(false)}
             className="block px-3 py-2.5 rounded-lg text-base font-medium text-[#17151A] hover:bg-[#5B3A6D]/10"
           >
@@ -145,6 +156,7 @@ export default function Navbar() {
           </Link>
           <Link
             href="/stranger-cam"
+            prefetch={true}
             onClick={() => setIsOpen(false)}
             className="block px-3 py-2.5 rounded-lg text-base font-semibold text-[#5B3A6D] bg-[#5B3A6D]/10 hover:bg-[#5B3A6D]/15 flex items-center justify-between"
           >
@@ -156,6 +168,7 @@ export default function Navbar() {
           </Link>
           <Link
             href="/premium"
+            prefetch={true}
             onClick={() => setIsOpen(false)}
             className="block px-3 py-2.5 rounded-lg text-base font-bold text-[#5B3A6D] bg-[#5B3A6D]/10 hover:bg-[#5B3A6D]/20"
           >
@@ -163,6 +176,7 @@ export default function Navbar() {
           </Link>
           <Link
             href="/blog"
+            prefetch={true}
             onClick={() => setIsOpen(false)}
             className="block px-3 py-2.5 rounded-lg text-base font-medium text-[#17151A] hover:bg-[#5B3A6D]/10"
           >
