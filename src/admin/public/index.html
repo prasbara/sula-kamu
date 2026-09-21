@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SULA — Trust, Safety & Incident Response Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0b0f19;
+      --card-bg: rgba(23, 32, 54, 0.7);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --accent-coral: #ff5e62;
+      --accent-blue: #3b82f6;
+      --accent-green: #10b981;
+      --accent-amber: #f59e0b;
+      --text-main: #f3f4f6;
+      --text-dim: #9ca3af;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Bar */
+    header {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-color);
+      padding: 16px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .logo-badge {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo-text {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #ff5e62, #ff9966);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: rgba(59, 130, 246, 0.2);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .user-profile-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .btn-logout {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .btn-logout:hover {
+      background: rgba(239, 68, 68, 0.35);
+    }
+
+    /* Container */
+    main {
+      flex: 1;
+      padding: 24px 32px;
+      max-width: 1400px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* Login Modal Overlay */
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(11, 15, 25, 0.92);
+      backdrop-filter: blur(16px);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+    }
+    .login-card {
+      background: rgba(30, 41, 59, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 36px 32px;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    }
+    .login-header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .login-header h2 {
+      font-size: 24px;
+      margin-top: 8px;
+    }
+    .login-header p {
+      color: var(--text-dim);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+    .form-group {
+      margin-bottom: 18px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 10px 14px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 14px;
+      font-family: inherit;
+    }
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--accent-coral);
+    }
+    .btn-login {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, #ff5e62, #ff9966);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .btn-login:hover {
+      opacity: 0.9;
+    }
+    .login-error {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .demo-credentials {
+      margin-top: 20px;
+      padding: 12px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--text-dim);
+      border: 1px dashed rgba(255, 255, 255, 0.1);
+    }
+
+    /* Metric Cards */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+      margin-bottom: 32px;
+    }
+    .metric-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border-color);
+      padding: 20px;
+      border-radius: var(--radius);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+    .metric-title {
+      font-size: 13px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .metric-value {
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    /* Emergency Control Bar */
+    .emergency-banner {
+      background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(245, 158, 11, 0.05));
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      padding: 18px 24px;
+      border-radius: var(--radius);
+      margin-bottom: 32px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .emergency-title {
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .switches {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .switch-btn {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+    .switch-btn.active {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: rgba(16, 185, 129, 0.4);
+      color: #6ee7b7;
+    }
+    .switch-btn.inactive {
+      background: rgba(239, 68, 68, 0.2);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+
+    /* Section Tabs */
+    .nav-tabs {
+      display: flex;
+      gap: 12px;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 24px;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 15px;
+      font-weight: 600;
+      padding: 12px 20px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .tab-btn.active {
+      color: #fff;
+      border-bottom-color: var(--accent-coral);
+    }
+
+    /* Content Tables & Cards */
+    .panel {
+      display: none;
+    }
+    .panel.active {
+      display: block;
+    }
+
+    .card-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+    }
+    .card-table th, .card-table td {
+      padding: 14px 18px;
+      text-align: left;
+      font-size: 14px;
+    }
+    .card-table th {
+      background: rgba(15, 23, 42, 0.6);
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+    .card-table tr {
+      border-bottom: 1px solid var(--border-color);
+    }
+    .card-table tr:last-child {
+      border-bottom: none;
+    }
+
+    .btn {
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 13px;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-green { background: var(--accent-green); color: #fff; }
+    .btn-red { background: var(--accent-coral); color: #fff; }
+    .btn-blue { background: var(--accent-blue); color: #fff; }
+
+    .code-pill {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      background: rgba(255,255,255,0.06);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Secure Login Overlay Modal -->
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="logo-text">SULA</div>
+        <h2>Masuk Admin Portal</h2>
+        <p>Akses Terbatas: Trust, Safety & Incident Response</p>
+      </div>
+
+      <div id="loginError" class="login-error">Username atau password salah.</div>
+
+      <form id="loginForm" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="loginUsername" placeholder="Contoh: superadmin" required autofocus>
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="loginPassword" placeholder="••••••••••••" required>
+        </div>
+        <button type="submit" class="btn-login">Masuk ke Sistem</button>
+      </form>
+
+      <div class="demo-credentials">
+        <strong>Kredensial Default (Database Seed):</strong><br>
+        • Super Admin: <code>superadmin</code> / <code>SulaAdmin2026!</code><br>
+        • Verifier: <code>reviewer1</code> / <code>SulaAdmin2026!</code><br>
+        • Moderator: <code>moderator1</code> / <code>SulaAdmin2026!</code>
+      </div>
+    </div>
+  </div>
+
+  <header>
+    <div class="logo-badge">
+      <div class="logo-text">SULA</div>
+      <div class="badge">Trust & Safety Console</div>
+      <span style="color: var(--text-dim); font-size: 13px;">Semarang Campus Ecosystem</span>
+    </div>
+    <div class="user-profile-bar" id="userProfileBar" style="display: none;">
+      <span id="userNameDisplay" style="font-size: 14px; font-weight: 600;">-</span>
+      <span class="badge" id="userRoleBadge">-</span>
+      <button class="btn-logout" onclick="handleLogout()">🚪 Keluar</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Emergency Killswitches -->
+    <div class="emergency-banner">
+      <div class="emergency-title">
+        <span>🚨</span>
+        <span>Incident Response & Emergency Controls</span>
+      </div>
+      <div class="switches">
+        <button id="btnReg" class="switch-btn active" onclick="toggleSwitch('registrations_enabled')">Registrations: Active</button>
+        <button id="btnMatch" class="switch-btn active" onclick="toggleSwitch('matchmaking_enabled')">Matchmaking: Active</button>
+        <button id="btnVerif" class="switch-btn active" onclick="toggleSwitch('verification_enabled')">KTM Verification: Active</button>
+      </div>
+    </div>
+
+    <!-- Live Metrics Grid -->
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-title">Active Students</div>
+        <div class="metric-value" id="valStudents" style="color: #6ee7b7;">-</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-title">Pending KTM Reviews</div>
+        <div class="metric-value" id="valPending" style="color: #fcd34d;">-</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-title">Open Reports</div>
+        <div class="metric-value" id="valReports" style="color: #fca5a5;">-</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-title">Active Matches</div>
+        <div class="metric-value" id="valMatches" style="color: #93c5fd;">-</div>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="nav-tabs">
+      <button class="tab-btn active" onclick="switchTab('tab-verifications')">🎓 Student Verifications Queue</button>
+      <button class="tab-btn" onclick="switchTab('tab-reports')">🚨 Incident Reports Case Management</button>
+      <button class="tab-btn" onclick="switchTab('tab-audit')">📜 Immutable Audit Logs</button>
+    </div>
+
+    <!-- Panel 1: Verifications Queue -->
+    <div id="tab-verifications" class="panel active">
+      <table class="card-table">
+        <thead>
+          <tr>
+            <th>Student</th>
+            <th>Campus (Semarang)</th>
+            <th>OCR Text Snippet</th>
+            <th>Confidence</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="verifBody">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-dim);">Loading queue...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Panel 2: Reports Case Management -->
+    <div id="tab-reports" class="panel">
+      <table class="card-table">
+        <thead>
+          <tr>
+            <th>Case ID</th>
+            <th>Category</th>
+            <th>Evidence Snippet</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Moderator Sanctions</th>
+          </tr>
+        </thead>
+        <tbody id="reportBody">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-dim);">Loading reports...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Panel 3: Immutable Audit Logs -->
+    <div id="tab-audit" class="panel">
+      <table class="card-table">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Actor</th>
+            <th>Role</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody id="auditBody">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-dim);">Loading audit logs...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    let authToken = localStorage.getItem('sula_admin_token') || '';
+    let currentUser = null;
+
+    function getHeaders() {
+      return {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json'
+      };
+    }
+
+    async function checkAuth() {
+      if (!authToken) {
+        showLoginOverlay(true);
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/auth/me', { headers: getHeaders() });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.authenticated) {
+            currentUser = data.user;
+            showLoginOverlay(false);
+            updateUserBar(data.user);
+            fetchData();
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('Auth check error:', err);
+      }
+
+      showLoginOverlay(true);
+    }
+
+    function showLoginOverlay(show) {
+      document.getElementById('loginOverlay').style.display = show ? 'flex' : 'none';
+      document.getElementById('userProfileBar').style.display = show ? 'none' : 'flex';
+    }
+
+    function updateUserBar(user) {
+      document.getElementById('userNameDisplay').textContent = user.displayName || user.username;
+      document.getElementById('userRoleBadge').textContent = user.role;
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      const errorDiv = document.getElementById('loginError');
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          authToken = data.token;
+          currentUser = data.user;
+          localStorage.setItem('sula_admin_token', authToken);
+          errorDiv.style.display = 'none';
+          showLoginOverlay(false);
+          updateUserBar(data.user);
+          fetchData();
+        } else {
+          errorDiv.textContent = data.error || 'Login gagal';
+          errorDiv.style.display = 'block';
+        }
+      } catch (err) {
+        errorDiv.textContent = 'Gagal terhubung ke server';
+        errorDiv.style.display = 'block';
+      }
+    }
+
+    async function handleLogout() {
+      if (authToken) {
+        await fetch('/api/auth/logout', { method: 'POST', headers: getHeaders() });
+      }
+      authToken = '';
+      currentUser = null;
+      localStorage.removeItem('sula_admin_token');
+      showLoginOverlay(true);
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById(tabId).classList.add('active');
+    }
+
+    async function fetchData() {
+      if (!authToken) return;
+
+      try {
+        // 1. Metrics
+        const resMeta = await fetch('/api/metrics', { headers: getHeaders() });
+        if (resMeta.ok) {
+          const data = await resMeta.json();
+          document.getElementById('valStudents').textContent = data.activeStudents;
+          document.getElementById('valPending').textContent = data.pendingVerifications;
+          document.getElementById('valReports').textContent = data.openReports;
+          document.getElementById('valMatches').textContent = data.activeMatches;
+
+          // Update Switch states
+          updateSwitchUI('btnReg', 'Registrations', data.switches.registrations_enabled);
+          updateSwitchUI('btnMatch', 'Matchmaking', data.switches.matchmaking_enabled);
+          updateSwitchUI('btnVerif', 'KTM Verification', data.switches.verification_enabled);
+        } else if (resMeta.status === 401) {
+          handleLogout();
+          return;
+        }
+
+        // 2. Verifications
+        const resVerif = await fetch('/api/verifications', { headers: getHeaders() });
+        if (resVerif.ok) {
+          const data = await resVerif.json();
+          renderVerifications(data.verifications);
+        }
+
+        // 3. Reports
+        const resRep = await fetch('/api/reports', { headers: getHeaders() });
+        if (resRep.ok) {
+          const data = await resRep.json();
+          renderReports(data.reports);
+        }
+
+        // 4. Audit
+        const resAudit = await fetch('/api/audit-logs', { headers: getHeaders() });
+        if (resAudit.ok) {
+          const data = await resAudit.json();
+          renderAudit(data.auditLogs);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function updateSwitchUI(elementId, label, isActive) {
+      const btn = document.getElementById(elementId);
+      if (btn) {
+        btn.className = `switch-btn ${isActive ? 'active' : 'inactive'}`;
+        btn.textContent = `${label}: ${isActive ? 'Active' : 'Disabled'}`;
+      }
+    }
+
+    async function toggleSwitch(key) {
+      const btn = event.target;
+      const isCurrentlyActive = btn.classList.contains('active');
+      const newState = !isCurrentlyActive;
+
+      await fetch('/api/emergency/toggle', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ key, enabled: newState })
+      });
+      fetchData();
+    }
+
+    function renderVerifications(list) {
+      const tbody = document.getElementById('verifBody');
+      if (!list || list.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim);">No pending verifications in queue.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = list.map(v => `
+        <tr>
+          <td><strong>${v.display_name || 'Anonymous Student'}</strong> (${v.study_field || '-'})</td>
+          <td>${v.institution_short_name} - ${v.institution_name}</td>
+          <td><code class="code-pill">${(v.ocr_extracted_text || 'None').slice(0, 60)}...</code></td>
+          <td>${Math.round((v.ocr_confidence || 0) * 100)}%</td>
+          <td><span class="badge" style="background: rgba(245,158,11,0.2); color:#fcd34d;">${v.status}</span></td>
+          <td>
+            <button class="btn btn-green" onclick="resolveVerif('${v.verification_id}', 'APPROVE')">Approve</button>
+            <button class="btn btn-red" onclick="resolveVerif('${v.verification_id}', 'REJECT')">Reject</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function resolveVerif(id, action) {
+      const notes = prompt(`Notes for ${action}:`, `Verified via admin queue`);
+      if (notes === null) return;
+      await fetch(`/api/verifications/${id}/resolve`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ action, notes })
+      });
+      fetchData();
+    }
+
+    function renderReports(list) {
+      const tbody = document.getElementById('reportBody');
+      if (!list || list.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim);">No open incident reports.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = list.map(r => `
+        <tr>
+          <td><strong class="code-pill">${r.report_code}</strong></td>
+          <td><span class="badge" style="background: rgba(239,68,68,0.2); color:#fca5a5;">${r.category}</span></td>
+          <td>${r.evidence_text || 'No textual evidence'}</td>
+          <td>${r.status}</td>
+          <td>${new Date(r.created_at).toLocaleDateString()}</td>
+          <td>
+            <button class="btn btn-red" onclick="resolveReport('${r.id}', 'BAN')">Ban</button>
+            <button class="btn btn-blue" onclick="resolveReport('${r.id}', 'WARN')">Warn</button>
+            <button class="btn" style="background: #64748b; color: #fff;" onclick="resolveReport('${r.id}', 'DISMISS')">Dismiss</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function resolveReport(id, action) {
+      const notes = prompt(`Sanction notes for ${action}:`, `Moderator action`);
+      if (notes === null) return;
+      await fetch(`/api/reports/${id}/resolve`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ action, notes })
+      });
+      fetchData();
+    }
+
+    function renderAudit(list) {
+      const tbody = document.getElementById('auditBody');
+      if (!list || list.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim);">No audit records found.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = list.map(a => `
+        <tr>
+          <td>${new Date(a.created_at).toLocaleTimeString()}</td>
+          <td><strong>${a.actor_id}</strong></td>
+          <td><span class="badge">${a.actor_role}</span></td>
+          <td><code>${a.action}</code></td>
+          <td>${a.target_resource}</td>
+          <td>${a.details || '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    checkAuth();
+    setInterval(fetchData, 10000);
+  </script>
+</body>
+</html>

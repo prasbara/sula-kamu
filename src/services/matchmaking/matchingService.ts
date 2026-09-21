@@ -1,0 +1,362 @@
+import { v4 as uuidv4 } from 'uuid';
+import { getDatabase } from '../../database/db.js';
+import { config } from '../../config/index.js';
+import { Match, Message, Profile, User } from '../../types/index.js';
+
+export interface DiscoveryCard {
+  profileId: string;
+  userId: string;
+  displayName: string;
+  age: number;
+  institutionName: string;
+  institutionShortName: string;
+  studyField: string;
+  bio: string | null;
+  interests: string[];
+  relationshipIntent: string;
+  coarseArea: string | null;
+  photoFileId?: string | null;
+  verifiedBadge: boolean;
+  mutualInterestsCount: number;
+}
+
+export interface LikeResult {
+  isMatch: boolean;
+  matchId?: string;
+  matchedProfile?: DiscoveryCard;
+  remainingLikes: number;
+}
+
+export class MatchingService {
+  /**
+   * Check if global matchmaking switch is enabled
+   */
+  public static isMatchmakingEnabled(): boolean {
+    const db = getDatabase();
+    const row = db.prepare("SELECT value FROM system_settings WHERE key = 'matchmaking_enabled'").get() as { value: string } | undefined;
+    return row ? row.value === 'true' : true;
+  }
+
+  /**
+   * Enforce daily like limits (Section 20: Anti-scraping and abuse prevention)
+   */
+  public static getDailyLikesRemaining(userId: string): number {
+    const db = getDatabase();
+    const today = new Date().toISOString().split('T')[0];
+    const countRow = db.prepare(`
+      SELECT COUNT(*) as count FROM likes 
+      WHERE from_user_id = ? AND created_at >= ?
+    `).get(userId, `${today} 00:00:00`) as { count: number };
+
+    const used = countRow.count;
+    return Math.max(0, config.DAILY_LIKE_LIMIT_FREE - used);
+  }
+
+  /**
+   * Get next candidate profiles for discovery
+   * Privacy-safe: Only returns verified active students, excludes already liked/passed/blocked users.
+   */
+  public static getDiscoveryQueue(userId: string, limit = 5): DiscoveryCard[] {
+    const db = getDatabase();
+
+    if (!this.isMatchmakingEnabled()) {
+      return [];
+    }
+
+    // Get current user's profile for compatibility scoring
+    const myProfile = db.prepare(`
+      SELECT p.*, sv.status as verif_status 
+      FROM profiles p 
+      JOIN student_verifications sv ON sv.user_id = p.user_id
+      WHERE p.user_id = ?
+    `).get(userId) as (Profile & { verif_status: string }) | undefined;
+
+    if (!myProfile || myProfile.verif_status !== 'VERIFIED') {
+      return []; // Only verified students can discover others
+    }
+
+    const myInterests: string[] = typeof myProfile.interests === 'string' 
+      ? JSON.parse(myProfile.interests) 
+      : (myProfile.interests || []);
+
+    // Query unvisited, verified profiles excluding blocked users
+    const rows = db.prepare(`
+      SELECT 
+        p.id as profile_id,
+        p.user_id,
+        p.display_name,
+        p.age,
+        p.study_field,
+        p.bio,
+        p.interests,
+        p.relationship_intent,
+        p.coarse_area,
+        p.photo_file_id,
+        i.name as institution_name,
+        i.short_name as institution_short_name,
+        sv.status as verif_status
+      FROM profiles p
+      JOIN institutions i ON i.id = p.institution_id
+      JOIN student_verifications sv ON sv.user_id = p.user_id
+      JOIN users u ON u.id = p.user_id
+      WHERE p.user_id != ?
+        AND p.is_active = 1
+        AND u.status = 'ACTIVE'
+        AND sv.status = 'VERIFIED'
+        AND p.user_id NOT IN (SELECT to_user_id FROM likes WHERE from_user_id = ?)
+        AND p.user_id NOT IN (SELECT to_user_id FROM passes WHERE from_user_id = ?)
+        AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)
+        AND p.user_id NOT IN (SELECT blocker_id FROM blocks WHERE blocked_id = ?)
+      ORDER BY RANDOM()
+      LIMIT ?
+    `).all(userId, userId, userId, userId, userId, limit) as any[];
+
+    return rows.map((r) => {
+      const cardInterests: string[] = typeof r.interests === 'string' ? JSON.parse(r.interests) : (r.interests || []);
+      const common = cardInterests.filter((x) => myInterests.includes(x)).length;
+
+      return {
+        profileId: r.profile_id,
+        userId: r.user_id,
+        displayName: r.display_name,
+        age: r.age,
+        institutionName: r.institution_name,
+        institutionShortName: r.institution_short_name,
+        studyField: r.study_field,
+        bio: r.bio,
+        interests: cardInterests,
+        relationshipIntent: r.relationship_intent,
+        coarseArea: r.coarse_area,
+        photoFileId: r.photo_file_id || null,
+        verifiedBadge: r.verif_status === 'VERIFIED',
+        mutualInterestsCount: common,
+      };
+    });
+  }
+
+  /**
+   * Record a LIKE and check for mutual match
+   */
+  public static handleLike(fromUserId: string, toUserId: string): LikeResult {
+    const db = getDatabase();
+
+    const remaining = this.getDailyLikesRemaining(fromUserId);
+    if (remaining <= 0) {
+      throw new Error('LIMIT_EXCEEDED: Batas like harian Anda telah habis. Kembali lagi besok!');
+    }
+
+    // Record like
+    db.prepare(`
+      INSERT OR IGNORE INTO likes (id, from_user_id, to_user_id)
+      VALUES (?, ?, ?)
+    `).run(uuidv4(), fromUserId, toUserId);
+
+    // Check if the other user has liked us (Mutual Match!)
+    const reciprocal = db.prepare(`
+      SELECT id FROM likes 
+      WHERE from_user_id = ? AND to_user_id = ?
+    `).get(toUserId, fromUserId);
+
+    if (reciprocal) {
+      // Check if match already exists
+      let match = db.prepare(`
+        SELECT * FROM matches 
+        WHERE (user_a_id = ? AND user_b_id = ?) OR (user_a_id = ? AND user_b_id = ?)
+      `).get(fromUserId, toUserId, toUserId, fromUserId) as Match | undefined;
+
+      let matchId: string;
+      if (!match) {
+        matchId = uuidv4();
+        db.prepare(`
+          INSERT INTO matches (id, user_a_id, user_b_id, is_active)
+          VALUES (?, ?, ?, 1)
+        `).run(matchId, fromUserId, toUserId);
+      } else {
+        matchId = match.id;
+        db.prepare('UPDATE matches SET is_active = 1 WHERE id = ?').run(matchId);
+      }
+
+      // Fetch partner profile card
+      const partner = this.getProfileByUserId(toUserId);
+
+      return {
+        isMatch: true,
+        matchId,
+        matchedProfile: partner || undefined,
+        remainingLikes: remaining - 1,
+      };
+    }
+
+    return {
+      isMatch: false,
+      remainingLikes: remaining - 1,
+    };
+  }
+
+  /**
+   * Record a PASS
+   */
+  public static handlePass(fromUserId: string, toUserId: string): void {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT OR IGNORE INTO passes (id, from_user_id, to_user_id)
+      VALUES (?, ?, ?)
+    `).run(uuidv4(), fromUserId, toUserId);
+  }
+
+  /**
+   * Get all active mutual matches for a user
+   */
+  public static getUserMatches(userId: string): { match: Match; partnerProfile: Profile }[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT 
+        m.id as match_id,
+        m.user_a_id,
+        m.user_b_id,
+        m.is_active,
+        m.created_at as match_created_at,
+        p.id as profile_id,
+        p.user_id as partner_user_id,
+        p.display_name,
+        p.age,
+        p.study_field,
+        p.bio,
+        p.interests,
+        p.relationship_intent,
+        p.coarse_area,
+        i.name as institution_name,
+        i.short_name as institution_short_name
+      FROM matches m
+      JOIN profiles p ON p.user_id = CASE WHEN m.user_a_id = ? THEN m.user_b_id ELSE m.user_a_id END
+      JOIN institutions i ON i.id = p.institution_id
+      WHERE (m.user_a_id = ? OR m.user_b_id = ?)
+        AND m.is_active = 1
+      ORDER BY m.created_at DESC
+    `).all(userId, userId, userId) as any[];
+
+    return rows.map((r) => ({
+      match: {
+        id: r.match_id,
+        user_a_id: r.user_a_id,
+        user_b_id: r.user_b_id,
+        is_active: r.is_active,
+        unmatched_by: null,
+        unmatched_reason: null,
+        created_at: r.match_created_at,
+        updated_at: r.match_created_at,
+      },
+      partnerProfile: {
+        id: r.profile_id,
+        user_id: r.partner_user_id,
+        display_name: r.display_name,
+        age: r.age,
+        institution_id: '',
+        study_field: r.study_field,
+        bio: r.bio,
+        interests: typeof r.interests === 'string' ? JSON.parse(r.interests) : r.interests,
+        relationship_intent: r.relationship_intent,
+        coarse_area: r.coarse_area,
+        photo_file_id: null,
+        is_active: 1,
+        institution_name: r.institution_name,
+        institution_short_name: r.institution_short_name,
+      },
+    }));
+  }
+
+  /**
+   * Relay an in-bot mediated message between matched users
+   */
+  public static sendMatchMessage(matchId: string, senderUserId: string, content: string): Message {
+    const db = getDatabase();
+
+    const match = db.prepare('SELECT * FROM matches WHERE id = ? AND is_active = 1').get(matchId) as Match | undefined;
+    if (!match) {
+      throw new Error('MATCH_NOT_ACTIVE: Match tidak ditemukan atau sudah tidak aktif.');
+    }
+
+    if (match.user_a_id !== senderUserId && match.user_b_id !== senderUserId) {
+      throw new Error('UNAUTHORIZED: Anda bukan bagian dari match ini.');
+    }
+
+    const recipientUserId = match.user_a_id === senderUserId ? match.user_b_id : match.user_a_id;
+
+    // Check if recipient has blocked sender
+    const isBlocked = db.prepare('SELECT id FROM blocks WHERE blocker_id = ? AND blocked_id = ?').get(recipientUserId, senderUserId);
+    if (isBlocked) {
+      throw new Error('BLOCKED: Pesan tidak dapat dikirim.');
+    }
+
+    const messageId = uuidv4();
+    db.prepare(`
+      INSERT INTO messages (id, match_id, sender_id, recipient_id, content)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(messageId, matchId, senderUserId, recipientUserId, content.trim().slice(0, 1000));
+
+    return {
+      id: messageId,
+      match_id: matchId,
+      sender_id: senderUserId,
+      recipient_id: recipientUserId,
+      content: content.trim(),
+      is_read: 0,
+      created_at: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Unmatch a connection
+   */
+  public static unmatch(matchId: string, userId: string, reason?: string): void {
+    const db = getDatabase();
+    db.prepare(`
+      UPDATE matches 
+      SET is_active = 0, unmatched_by = ?, unmatched_reason = ?, updated_at = datetime('now')
+      WHERE id = ? AND (user_a_id = ? OR user_b_id = ?)
+    `).run(userId, reason || 'User requested unmatch', matchId, userId, userId);
+  }
+
+  public static getProfileByUserId(userId: string): DiscoveryCard | null {
+    const db = getDatabase();
+    const r = db.prepare(`
+      SELECT 
+        p.id as profile_id,
+        p.user_id,
+        p.display_name,
+        p.age,
+        p.study_field,
+        p.bio,
+        p.interests,
+        p.relationship_intent,
+        p.coarse_area,
+        p.photo_file_id,
+        i.name as institution_name,
+        i.short_name as institution_short_name,
+        sv.status as verif_status
+      FROM profiles p
+      JOIN institutions i ON i.id = p.institution_id
+      JOIN student_verifications sv ON sv.user_id = p.user_id
+      WHERE p.user_id = ?
+    `).get(userId) as any;
+
+    if (!r) return null;
+
+    return {
+      profileId: r.profile_id,
+      userId: r.user_id,
+      displayName: r.display_name,
+      age: r.age,
+      institutionName: r.institution_name,
+      institutionShortName: r.institution_short_name,
+      studyField: r.study_field,
+      bio: r.bio,
+      interests: typeof r.interests === 'string' ? JSON.parse(r.interests) : r.interests,
+      relationshipIntent: r.relationship_intent,
+      coarseArea: r.coarse_area,
+      photoFileId: r.photo_file_id || null,
+      verifiedBadge: r.verif_status === 'VERIFIED',
+      mutualInterestsCount: 0,
+    };
+  }
+}

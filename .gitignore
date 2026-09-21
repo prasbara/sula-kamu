@@ -1,0 +1,27 @@
+# Environment variables
+.env
+.env.local
+
+# Node modules & builds
+node_modules/
+dist/
+
+# SQLite Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+data/
+
+# Secure Encrypted Temporary Uploads
+uploads/
+temp/
+
+# Logs
+*.log
+npm-debug.log*
+
+# System files
+.DS_Store
+Thumbs.db
+*.traineddata
