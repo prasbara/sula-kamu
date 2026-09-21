@@ -19,9 +19,16 @@ export class DiscoveryHandler {
       ? `\n🤝 *${card.mutualInterestsCount} Minat yang Sama!*\n` 
       : '';
 
+    let verifLabel = 'Unverified';
+    if ((card as any).verificationTier === 'STUDENT_VERIFIED') {
+      verifLabel = 'Student Verified 🛡️';
+    } else if ((card as any).verificationTier === 'PHOTO_VERIFIED') {
+      verifLabel = 'Photo Verified 👤';
+    }
+
     return (
       `*${card.displayName}*, ${card.age} • 📍 *${card.coarseArea || 'Semarang'}*\n` +
-      `🎓 *${card.institutionShortName}* — ${card.studyField} (Terverifikasi 🛡️)\n` +
+      `🎓 *${card.institutionShortName}* — ${card.studyField} (${verifLabel})\n` +
       `🎯 *${ProfileHandler.formatIntent(card.relationshipIntent as any)}*\n` +
       `${commonNotice}` +
       `\n💬 *"${card.bio || 'Belum mengisi bio.'}"*\n\n` +

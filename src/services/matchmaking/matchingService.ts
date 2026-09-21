@@ -38,23 +38,60 @@ export class MatchingService {
   }
 
   /**
-   * Enforce daily like limits (Section 20: Anti-scraping and abuse prevention)
+   * Determine daily like allowance based on user verification and subscription tier (Section 8 & 9)
+   * - Unverified (Level 0): 10 likes / day
+   * - Photo Verified (Level 1): 50 likes / day
+   * - Student Verified (KTM, Level 2): 50 likes / day
+   * - Premium Active: 100 likes / day
    */
-  public static getDailyLikesRemaining(userId: string): number {
+  public static getUserDailyLikeAllowance(userId: string): number {
+    const db = getDatabase();
+    const user = db.prepare('SELECT verification_status, subscription_status FROM users WHERE id = ?').get(userId) as
+      | { verification_status: string; subscription_status: string }
+      | undefined;
+
+    if (!user) return 10;
+
+    if (user.subscription_status === 'PREMIUM_ACTIVE') {
+      return 100;
+    }
+
+    if (user.verification_status === 'KTM_VERIFIED' || user.verification_status === 'PHOTO_VERIFIED') {
+      return 50;
+    }
+
+    // Check student_verifications table for legacy verified records
+    const ktm = db.prepare("SELECT status FROM student_verifications WHERE user_id = ? AND status = 'VERIFIED'").get(userId);
+    if (ktm) return 50;
+
+    const photo = db.prepare("SELECT status FROM photo_verifications WHERE user_id = ? AND status = 'PHOTO_VERIFIED'").get(userId);
+    if (photo) return 50;
+
+    return 10;
+  }
+
+  /**
+   * Get server-enforced likes remaining today
+   */
+  public static getDailyLikesRemaining(userId: string): { used: number; total: number; remaining: number } {
     const db = getDatabase();
     const today = new Date().toISOString().split('T')[0];
-    const countRow = db.prepare(`
-      SELECT COUNT(*) as count FROM likes 
-      WHERE from_user_id = ? AND created_at >= ?
-    `).get(userId, `${today} 00:00:00`) as { count: number };
+    const allowance = this.getUserDailyLikeAllowance(userId);
 
-    const used = countRow.count;
-    return Math.max(0, config.DAILY_LIKE_LIMIT_FREE - used);
+    const row = db.prepare('SELECT like_count FROM daily_like_usage WHERE user_id = ? AND usage_date = ?').get(userId, today) as
+      | { like_count: number }
+      | undefined;
+
+    const used = row ? row.like_count : 0;
+    return {
+      used,
+      total: allowance,
+      remaining: Math.max(0, allowance - used),
+    };
   }
 
   /**
    * Get next candidate profiles for discovery
-   * Privacy-safe: Only returns verified active students, excludes already liked/passed/blocked users.
    */
   public static getDiscoveryQueue(userId: string, limit = 5): DiscoveryCard[] {
     const db = getDatabase();
@@ -64,22 +101,15 @@ export class MatchingService {
     }
 
     // Get current user's profile for compatibility scoring
-    const myProfile = db.prepare(`
-      SELECT p.*, sv.status as verif_status 
-      FROM profiles p 
-      JOIN student_verifications sv ON sv.user_id = p.user_id
-      WHERE p.user_id = ?
-    `).get(userId) as (Profile & { verif_status: string }) | undefined;
+    const myProfile = db.prepare('SELECT p.* FROM profiles p WHERE p.user_id = ?').get(userId) as Profile | undefined;
 
-    if (!myProfile || myProfile.verif_status !== 'VERIFIED') {
-      return []; // Only verified students can discover others
-    }
+    const myInterests: string[] = myProfile
+      ? typeof myProfile.interests === 'string'
+        ? JSON.parse(myProfile.interests)
+        : myProfile.interests || []
+      : [];
 
-    const myInterests: string[] = typeof myProfile.interests === 'string' 
-      ? JSON.parse(myProfile.interests) 
-      : (myProfile.interests || []);
-
-    // Query unvisited, verified profiles excluding blocked users
+    // Query unvisited profiles excluding blocked users
     const rows = db.prepare(`
       SELECT 
         p.id as profile_id,
@@ -94,15 +124,14 @@ export class MatchingService {
         p.photo_file_id,
         i.name as institution_name,
         i.short_name as institution_short_name,
-        sv.status as verif_status
+        u.verification_status,
+        u.subscription_status
       FROM profiles p
       JOIN institutions i ON i.id = p.institution_id
-      JOIN student_verifications sv ON sv.user_id = p.user_id
       JOIN users u ON u.id = p.user_id
       WHERE p.user_id != ?
         AND p.is_active = 1
         AND u.status = 'ACTIVE'
-        AND sv.status = 'VERIFIED'
         AND p.user_id NOT IN (SELECT to_user_id FROM likes WHERE from_user_id = ?)
         AND p.user_id NOT IN (SELECT to_user_id FROM passes WHERE from_user_id = ?)
         AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)
@@ -112,8 +141,11 @@ export class MatchingService {
     `).all(userId, userId, userId, userId, userId, limit) as any[];
 
     return rows.map((r) => {
-      const cardInterests: string[] = typeof r.interests === 'string' ? JSON.parse(r.interests) : (r.interests || []);
+      const cardInterests: string[] = typeof r.interests === 'string' ? JSON.parse(r.interests) : r.interests || [];
       const common = cardInterests.filter((x) => myInterests.includes(x)).length;
+
+      const isKtm = r.verification_status === 'KTM_VERIFIED';
+      const isPhoto = r.verification_status === 'PHOTO_VERIFIED';
 
       return {
         profileId: r.profile_id,
@@ -128,22 +160,31 @@ export class MatchingService {
         relationshipIntent: r.relationship_intent,
         coarseArea: r.coarse_area,
         photoFileId: r.photo_file_id || null,
-        verifiedBadge: r.verif_status === 'VERIFIED',
+        verifiedBadge: isKtm || isPhoto,
+        verificationTier: isKtm ? 'STUDENT_VERIFIED' : isPhoto ? 'PHOTO_VERIFIED' : 'UNVERIFIED',
         mutualInterestsCount: common,
       };
     });
   }
 
   /**
-   * Record a LIKE and check for mutual match
+   * Record a LIKE and check for mutual match with server-enforced atomic like allowance
    */
   public static handleLike(fromUserId: string, toUserId: string): LikeResult {
     const db = getDatabase();
+    const today = new Date().toISOString().split('T')[0];
+    const { remaining, total, used } = this.getDailyLikesRemaining(fromUserId);
 
-    const remaining = this.getDailyLikesRemaining(fromUserId);
     if (remaining <= 0) {
-      throw new Error('LIMIT_EXCEEDED: Batas like harian Anda telah habis. Kembali lagi besok!');
+      throw new Error(`LIMIT_EXCEEDED: Batas like harian Anda telah habis (${total} like/hari). Lakukan verifikasi untuk kuota 50 like/hari!`);
     }
+
+    // Atomic increment of daily like usage
+    db.prepare(`
+      INSERT INTO daily_like_usage (user_id, usage_date, like_count)
+      VALUES (?, ?, 1)
+      ON CONFLICT(user_id, usage_date) DO UPDATE SET like_count = like_count + 1
+    `).run(fromUserId, today);
 
     // Record like
     db.prepare(`

@@ -152,6 +152,126 @@ async function runSecurityTests() {
     'AI KTM Validator produces well-structured verdict and confidence metrics'
   );
 
+  // TEST 9: Fixed 33 Institutions Registry (Section 1)
+  console.log('\n8. Fixed 33 Higher-Education Institutions Constraint:');
+  const { SEMARANG_INSTITUTIONS } = await import('../lib/constants.js');
+  assert(SEMARANG_INSTITUTIONS.length === 33, 'SEMARANG_INSTITUTIONS constants has exactly 33 institutions');
+  const dbInstCount = (db.prepare('SELECT COUNT(*) as count FROM institutions').get() as any).count;
+  assert(dbInstCount === 33, `Database institutions table contains exactly 33 institutions (found: ${dbInstCount})`);
+
+  // TEST 10: Real User Growth Counter & Public Stats (Section 2, 3, 4, 33)
+  console.log('\n9. Real Cumulative User Growth Counter:');
+  const { StatisticsService } = await import('../src/services/stats/statisticsService.js');
+  const statsBefore = StatisticsService.getPublicStats();
+  assert(statsBefore.institutions === 33, 'Public stats reports exactly 33 institutions');
+  assert(typeof statsBefore.studentsJoined === 'number', 'Public stats reports numeric studentsJoined count');
+
+  const newUserTestId = uuidv4();
+  db.prepare("INSERT INTO users (id, telegram_id, status) VALUES (?, ?, 'ACTIVE')").run(newUserTestId, `stats-user-${newUserTestId.slice(0, 6)}`);
+  StatisticsService.recordOnboardingCompletion(newUserTestId);
+  const statsAfter = StatisticsService.getPublicStats();
+  assert(statsAfter.studentsJoined === statsBefore.studentsJoined + 1, 'Counter increments by 1 upon onboarding completion milestone');
+
+  // Milestone is idempotent (duplicate milestone call does not inflate counter)
+  StatisticsService.recordOnboardingCompletion(newUserTestId);
+  const statsAfterDuplicate = StatisticsService.getPublicStats();
+  assert(statsAfterDuplicate.studentsJoined === statsAfter.studentsJoined, 'Counter does not inflate on duplicate milestone events');
+
+  // TEST 11: Server-Side Daily Like Limits (10 vs 50) (Section 8 & 9)
+  console.log('\n10. Server-Side Daily Like Limits Enforcement:');
+  // 11a: Unverified user (Limit = 10)
+  const unverifiedUserId = uuidv4();
+  db.prepare("INSERT INTO users (id, telegram_id, status, verification_status) VALUES (?, ?, 'ACTIVE', 'UNVERIFIED')").run(unverifiedUserId, `unverif-${unverifiedUserId.slice(0, 6)}`);
+  const unverifiedAllowance = MatchingService.getUserDailyLikeAllowance(unverifiedUserId);
+  assert(unverifiedAllowance === 10, `Unverified user daily like allowance is 10 (actual: ${unverifiedAllowance})`);
+
+  // 11b: Photo Verified user (Limit = 50)
+  const photoVerifiedUserId = uuidv4();
+  db.prepare("INSERT INTO users (id, telegram_id, status, verification_status) VALUES (?, ?, 'ACTIVE', 'PHOTO_VERIFIED')").run(photoVerifiedUserId, `photoverif-${photoVerifiedUserId.slice(0, 6)}`);
+  const photoAllowance = MatchingService.getUserDailyLikeAllowance(photoVerifiedUserId);
+  assert(photoAllowance === 50, `Photo Verified user daily like allowance is 50 (actual: ${photoAllowance})`);
+
+  // 11c: KTM Verified user (Limit = 50)
+  const ktmVerifiedUserId = uuidv4();
+  db.prepare("INSERT INTO users (id, telegram_id, status, verification_status) VALUES (?, ?, 'ACTIVE', 'KTM_VERIFIED')").run(ktmVerifiedUserId, `ktmverif-${ktmVerifiedUserId.slice(0, 6)}`);
+  const ktmAllowance = MatchingService.getUserDailyLikeAllowance(ktmVerifiedUserId);
+  assert(ktmAllowance === 50, `KTM Verified user daily like allowance is 50 (actual: ${ktmAllowance})`);
+
+  // 11d: Atomic Like Limit Exhaustion and Server-side Rejection
+  const targetUserTest = uuidv4();
+  db.prepare("INSERT INTO users (id, telegram_id, status) VALUES (?, ?, 'ACTIVE')").run(targetUserTest, `target-${targetUserTest.slice(0, 6)}`);
+  const today = new Date().toISOString().slice(0, 10);
+  // Set unverified user usage to 10
+  db.prepare("INSERT OR REPLACE INTO daily_like_usage (user_id, usage_date, like_count) VALUES (?, ?, 10)").run(unverifiedUserId, today);
+  const remainingAfterMax = MatchingService.getDailyLikesRemaining(unverifiedUserId).remaining;
+  assert(remainingAfterMax === 0, 'Remaining likes reaches 0 when daily limit is exhausted');
+
+  let likeBlocked = false;
+  try {
+    MatchingService.handleLike(unverifiedUserId, targetUserTest);
+  } catch (e: any) {
+    likeBlocked = e.message.includes('Batas like harian') || e.message.includes('LIMIT_EXCEEDED');
+  }
+  assert(likeBlocked, 'Server-side rejects like attempt when daily limit is exhausted');
+
+  // TEST 12: Website Premium Payment Workflow & FIFO Queue (Section 11, 12, 13, 15)
+  console.log('\n11. Manual Website Payment Verification & FIFO Queue:');
+  const { PaymentService } = await import('../src/services/payment/paymentService.js');
+  const plans = PaymentService.getPlans();
+  assert(plans.length >= 2, 'Loads active subscription plans (Early Access & Early Launch)');
+  assert(plans.some((p) => p.id === 'early_access' && p.price === 5000), 'Early Access plan configured at Rp5.000 / month');
+  assert(plans.some((p) => p.id === 'early_launch' && p.price === 8000), 'Early Launch plan configured at Rp8.000 / month');
+
+  // Create payment request
+  const payUser = uuidv4();
+  db.prepare("INSERT INTO users (id, telegram_id, status) VALUES (?, ?, 'ACTIVE')").run(payUser, `pay-${payUser.slice(0, 6)}`);
+  const payReq = PaymentService.createPaymentRequest(payUser, 'early_access', 'QRIS');
+  assert(payReq.id.startsWith('PAY-NIVA-'), `Payment request generated with standard code: ${payReq.id}`);
+  assert(payReq.amount === 5000, 'Payment request locks correct plan amount (Rp5.000)');
+
+  // Submit proof
+  const testProofBuffer = validPng;
+  await PaymentService.submitPaymentProof(payReq.id, testProofBuffer);
+  const payUnderReview = db.prepare('SELECT status FROM payment_requests WHERE id = ?').get(payReq.id) as any;
+  assert(payUnderReview.status === 'UNDER_REVIEW', 'Payment proof submitted and transitioned to UNDER_REVIEW');
+
+  // FIFO Queue order check
+  const queue = PaymentService.getPaymentQueue();
+  assert(queue.length > 0 && queue.some((q) => q.payment_id === payReq.id), 'Payment request enters admin FIFO queue');
+
+  // TEST 13: Transactional Payment Approval & 1-Month Subscription (Section 17 & 18)
+  console.log('\n12. Transactional Premium Activation & Audit:');
+  PaymentService.resolvePayment(payReq.id, 'APPROVE', 'admin-tester', 'Bukti QRIS sesuai dan valid');
+  const updatedPay = db.prepare('SELECT status FROM payment_requests WHERE id = ?').get(payReq.id) as any;
+  assert(updatedPay.status === 'APPROVED', 'Payment status updated to APPROVED');
+
+  const userAfterPayment = db.prepare('SELECT subscription_status FROM users WHERE id = ?').get(payUser) as any;
+  assert(userAfterPayment.subscription_status === 'PREMIUM_ACTIVE', 'User subscription_status automatically becomes PREMIUM_ACTIVE');
+
+  const sub = db.prepare("SELECT * FROM subscriptions WHERE user_id = ?").get(payUser) as any;
+  assert(sub !== undefined, 'Active subscription record created transactionally');
+  const startDate = new Date(sub.starts_at);
+  const endDate = new Date(sub.ends_at);
+  const durationDays = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 3600 * 24));
+  assert(durationDays >= 28 && durationDays <= 31, `Subscription duration is exactly 1 month (~30 days, actual: ${durationDays} days)`);
+
+  // Prevent double approval
+  let doubleApprovalError = false;
+  try {
+    PaymentService.resolvePayment(payReq.id, 'APPROVE', 'admin-tester', 'Double approval test');
+  } catch {
+    doubleApprovalError = true;
+  }
+  assert(doubleApprovalError, 'Prevents approving a payment request more than once');
+
+  // TEST 14: Super Admin Promotional Premium Grant (Section 20 & 22)
+  console.log('\n13. Super Admin Promotional Premium Grant:');
+  const promoUser = uuidv4();
+  db.prepare("INSERT INTO users (id, telegram_id, status) VALUES (?, ?, 'ACTIVE')").run(promoUser, `promo-${promoUser.slice(0, 6)}`);
+  PaymentService.grantPromotionalPremium(promoUser, 30, 'admin-super', 'Community giveaway winner');
+  const promoUserDb = db.prepare('SELECT subscription_status FROM users WHERE id = ?').get(promoUser) as any;
+  assert(promoUserDb.subscription_status === 'PREMIUM_ACTIVE', 'Promotional premium grant activates user subscription');
+
   console.log(`\n=============================================`);
   console.log(`TEST SUMMARY: ${passed}/${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   console.log(`=============================================\n`);

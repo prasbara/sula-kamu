@@ -54,6 +54,13 @@ export default function Navbar() {
               Kampus Semarang
             </Link>
             <Link
+              href="/premium"
+              className="px-3 py-2 text-sm font-semibold text-[#8A5A9A] hover:text-[#5B3A6D] hover:bg-[#8A5A9A]/10 rounded-lg transition-colors flex items-center gap-1"
+            >
+              <span>Premium</span>
+              <span className="text-[9px] bg-[#E8B4C8] text-[#17151A] font-bold px-1.5 py-0.2 rounded-full">Rp5k</span>
+            </Link>
+            <Link
               href="/blog"
               className="px-3 py-2 text-sm font-medium text-[#68626D] hover:text-[#5B3A6D] hover:bg-[#5B3A6D]/5 rounded-lg transition-colors"
             >
@@ -120,6 +127,13 @@ export default function Navbar() {
             className="block px-3 py-2.5 rounded-lg text-base font-medium text-[#17151A] hover:bg-[#5B3A6D]/10"
           >
             Komunitas Kampus Semarang
+          </Link>
+          <Link
+            href="/premium"
+            onClick={() => setIsOpen(false)}
+            className="block px-3 py-2.5 rounded-lg text-base font-bold text-[#5B3A6D] bg-[#5B3A6D]/10 hover:bg-[#5B3A6D]/20"
+          >
+            ✨ NIVA Premium (Mulai Rp5k)
           </Link>
           <Link
             href="/blog"

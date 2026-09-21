@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
-import { getDatabase } from '../../database/db.js';
-import { AuditLog, Report, ReportCategory, ReportStatus, SecurityEvent } from '../../types/index.js';
+import { getDatabase } from '../../database/db';
+import { AuditLog, Report, ReportCategory, ReportStatus, SecurityEvent } from '../../types/index';
 
 export interface CreateReportInput {
   reporterUserId: string;

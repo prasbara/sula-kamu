@@ -243,10 +243,14 @@ export class VerificationService {
       );
     }
 
-    // 9. Update user status if auto-verified
+    // 9. Update user status & verification tier
     if (finalStatus === 'VERIFIED') {
-      db.prepare("UPDATE users SET status = 'ACTIVE', updated_at = datetime('now') WHERE id = ?").run(userId);
+      db.prepare("UPDATE users SET status = 'ACTIVE', verification_status = 'KTM_VERIFIED', updated_at = datetime('now') WHERE id = ?").run(userId);
       db.prepare("UPDATE student_verifications SET verified_at = datetime('now') WHERE user_id = ?").run(userId);
+    } else if (finalStatus === 'NEEDS_REVIEW') {
+      db.prepare("UPDATE users SET verification_status = 'KTM_PENDING', updated_at = datetime('now') WHERE id = ?").run(userId);
+    } else {
+      db.prepare("UPDATE users SET verification_status = 'VERIFICATION_REJECTED', updated_at = datetime('now') WHERE id = ?").run(userId);
     }
 
     // 10. Record attempt log

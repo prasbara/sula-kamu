@@ -14,6 +14,8 @@ import { Institution, Profile, User } from '../types/index.js';
 import { v4 as uuidv4 } from 'uuid';
 
 import { PhotoModerationService } from '../services/safety/photoModerationService.js';
+import { StatisticsService } from '../services/stats/statisticsService.js';
+import { PhotoVerificationService } from '../services/verification/photoVerificationService.js';
 
 export interface SessionData {
   step:
@@ -21,6 +23,7 @@ export interface SessionData {
     | 'AWAITING_AGE'
     | 'AWAITING_INSTITUTION'
     | 'AWAITING_KTM_UPLOAD'
+    | 'AWAITING_PHOTO_VERIFICATION'
     | 'AWAITING_PROFILE_NAME'
     | 'AWAITING_PROFILE_MAJOR'
     | 'AWAITING_PROFILE_BIO'
@@ -176,20 +179,147 @@ export function createBot(): Bot<MyContext> {
     }
 
     ctx.session.selectedInstitutionId = inst.id;
-    ctx.session.step = 'AWAITING_KTM_UPLOAD';
 
     await ctx.editMessageText(
       `🎓 *Kampus Terpilih:* ${inst.name} (${inst.short_name})\n\n` +
-      `📸 *Langkah 2: Unggah Foto Kartu Tanda Mahasiswa (KTM)*\n\n` +
-      `Demi menjaga keamanan seluruh mahasiswa di Semarang, silakan kirimkan foto KTM Anda.\n\n` +
-      `🔒 *Jaminan Keamanan Privasi SULA:*\n` +
-      `• Metadata EXIF & GPS langsung dihapus saat file diterima.\n` +
-      `• Foto diproses secara terenkripsi hanya untuk ekstraksi nama & status mahasiswa.\n` +
-      `• *NIM dan foto KTM TIDAK PERNAH disimpan permanen* atau diperlihatkan kepada orang lain.\n\n` +
+      `🛡️ *Langkah 2: Pilih Opsi Verifikasi Akun NIVA*\n\n` +
+      `NIVA mendukung 2 jalur verifikasi manual demi menjaga keamanan komunitas:\n\n` +
+      `1️⃣ *Verifikasi Mahasiswa (KTM)*\n` +
+      `• Unggah kartu mahasiswa aktif Anda\n` +
+      `• Status: *Student Verified 🛡️*\n` +
+      `• Kuota Like: *50 like / hari*\n\n` +
+      `2️⃣ *Verifikasi Foto Asli (Selfie)*\n` +
+      `• Unggah foto selfie asli diri Anda\n` +
+      `• Status: *Photo Verified 👤* (Bukan bukti keaktifan kampus)\n` +
+      `• Kuota Like: *50 like / hari*\n\n` +
+      `3️⃣ *Lewati Verifikasi (Akun Gratis)*\n` +
+      `• Mulai langsung tanpa dokumen\n` +
+      `• Status: *Unverified*\n` +
+      `• Kuota Like: *10 like / hari*\n\n` +
+      `_Silakan tentukan pilihan Anda:_`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('🎓 Verifikasi Mahasiswa (KTM)', 'choose_verif_ktm')
+          .row()
+          .text('👤 Verifikasi Foto Asli (Selfie)', 'choose_verif_photo')
+          .row()
+          .text('⚡ Lewati (Akun Gratis - 10 Like/Hari)', 'choose_verif_skip'),
+      }
+    );
+  });
+
+  // Verification Choice: KTM
+  bot.callbackQuery('choose_verif_ktm', async (ctx) => {
+    ctx.session.step = 'AWAITING_KTM_UPLOAD';
+    await ctx.editMessageText(
+      `📸 *Verifikasi Mahasiswa (KTM)*\n\n` +
+      `Silakan kirimkan foto Kartu Tanda Mahasiswa (KTM) Anda.\n\n` +
+      `🔒 *Jaminan Keamanan & Privasi SULA/NIVA:*\n` +
+      `• Metadata EXIF & GPS langsung dihapus.\n` +
+      `• Foto diproses secara terenkripsi hanya untuk validasi mahasiswa.\n` +
+      `• *NIM dan foto KTM TIDAK PERNAH disimpan permanen* atau diperlihatkan ke publik.\n\n` +
       `_Silakan kirimkan foto KTM Anda sekarang (sebagai Foto di Telegram):_`,
       { parse_mode: 'Markdown' }
     );
   });
+
+  // Verification Choice: Photo
+  bot.callbackQuery('choose_verif_photo', async (ctx) => {
+    ctx.session.step = 'AWAITING_PHOTO_VERIFICATION';
+    await ctx.editMessageText(
+      `📸 *Verifikasi Foto Asli (Selfie)*\n\n` +
+      `Silakan kirimkan foto selfie asli Anda saat ini yang jelas dan berpakaian sopan.\n\n` +
+      `⚠️ *Catatan Transparansi:*\n` +
+      `Verifikasi foto membuktikan keaslian profil foto Anda (*Photo Verified 👤*) dan memberikan kuota *50 like/hari*, namun *BUKAN* merupakan bukti status mahasiswa terdaftar di universitas.\n\n` +
+      `_Silakan kirimkan foto selfie Anda sekarang (sebagai Foto di Telegram):_`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // Verification Choice: Skip
+  bot.callbackQuery('choose_verif_skip', async (ctx) => {
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+    const db = getDatabase();
+
+    const existingProfile = db.prepare('SELECT id FROM profiles WHERE user_id = ?').get(user.id);
+    if (existingProfile) {
+      ctx.session.step = 'IDLE';
+      await ctx.editMessageText(
+        `⚡ *Verifikasi Dilewati*\n\n` +
+        `Akun Anda berstatus *Unverified* dengan kuota harian *10 like/hari*. Anda dapat mengajukan verifikasi kapan saja lewat menu Profil.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: ProfileHandler.getProfileKeyboard(),
+        }
+      );
+    } else {
+      ctx.session.step = 'AWAITING_PROFILE_MAJOR';
+      await ctx.editMessageText(
+        `⚡ *Verifikasi Dilewati (Akun Gratis - 10 Like/Hari)*\n\n` +
+        `Langkah selanjutnya: Lengkapi profil Anda.\n` +
+        `Ketik *Jurusan / Program Studi* Anda (misal: Teknik Informatika, Manajemen, dll):`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+  });
+
+  // Verification Menu from Profile/Settings
+  bot.callbackQuery('cmd_verify_menu', async (ctx) => {
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+    const db = getDatabase();
+
+    const u = db.prepare('SELECT verification_status FROM users WHERE id = ?').get(user.id) as any;
+    const curStatus = u?.verification_status || 'UNVERIFIED';
+
+    await ctx.reply(
+      `🛡️ *PUSAT VERIFIKASI AKUN NIVA*\n\n` +
+      `Status Verifikasi Saat Ini: *${curStatus}*\n\n` +
+      `Pilih jalur verifikasi untuk meningkatkan kuota harian menjadi *50 like/hari*:\n\n` +
+      `• *Student Verified (KTM)*: Bukti sah mahasiswa kampus Semarang.\n` +
+      `• *Photo Verified (Selfie)*: Bukti keaslian foto profil.\n`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('🎓 Verifikasi Mahasiswa (KTM)', 'choose_verif_ktm')
+          .row()
+          .text('👤 Verifikasi Foto Asli (Selfie)', 'choose_verif_photo')
+          .row()
+          .text('🔙 Kembali ke Profil', 'cmd_my_profile'),
+      }
+    );
+  });
+
+  // Premium Command & Callback (Section 11, 12, 20, 29)
+  const handlePremiumInfo = async (ctx: any) => {
+    const webUrl = config.APP_URL || 'http://localhost:3000';
+    await ctx.reply(
+      `⭐ *NIVA PREMIUM MEMBERSHIP*\n\n` +
+      `Tingkatkan pengalaman sosial & matchmaking Anda dengan NIVA Premium:\n\n` +
+      `💎 *Paket Berlangganan:* \n` +
+      `• *Early Access:* Rp5.000 / 1 bulan\n` +
+      `• *Early Launch:* Rp8.000 / 1 bulan\n\n` +
+      `✨ *Fitur Eksklusif:*\n` +
+      `• Extended discovery & filter pencarian prioritas\n` +
+      `• Fitur Who Liked You (lihat siapa yang menyukai Anda)\n` +
+      `• Rewind & Boost profil mahasiswa\n\n` +
+      `🔒 *Pembayaran Resmi Melalui Website NIVA:*\n` +
+      `Demi keamanan dan verifikasi bukti transfer yang auditable, pembelian paket diproses melalui website resmi NIVA.\n\n` +
+      `👉 [Klik Di Sini Untuk Berlangganan NIVA Premium](${webUrl}/premium)`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .url('🌐 Buka Website NIVA Premium', `${webUrl}/premium`)
+          .row()
+          .text('🔙 Kembali ke Menu', 'cmd_my_profile'),
+      }
+    );
+  };
+
+  bot.command('premium', handlePremiumInfo);
+  bot.callbackQuery('cmd_premium', handlePremiumInfo);
 
   // Photo upload handler (KTM verification)
   bot.on(':photo', async (ctx) => {
@@ -251,6 +381,68 @@ export function createBot(): Bot<MyContext> {
           ctx.chat.id,
           statusMsg.message_id,
           'Terjadi kendala saat memproses foto profil. Silakan coba kirim ulang.'
+        );
+      }
+      return;
+    }
+
+    // 2. Photo Verification Handler (Option B - Real Photo Verification / Level 1)
+    if (ctx.session.step === 'AWAITING_PHOTO_VERIFICATION') {
+      const statusMsg = await ctx.reply('⏳ Memeriksa foto selfie Anda dengan sistem keamanan terenkripsi...');
+      try {
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const file = await ctx.api.getFile(photo.file_id);
+        const fileUrl = `https://api.telegram.org/file/bot${config.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        const response = await fetch(fileUrl);
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        const result = await PhotoVerificationService.submitPhotoVerification(user.id, buffer);
+
+        if (result.success) {
+          const existingProfile = db.prepare('SELECT id FROM profiles WHERE user_id = ?').get(user.id);
+          if (existingProfile) {
+            ctx.session.step = 'IDLE';
+            await ctx.api.editMessageText(
+              ctx.chat.id,
+              statusMsg.message_id,
+              `✅ *Foto Verifikasi Berhasil Diterima!*\n\n` +
+              `Status: *PHOTO_PENDING*\n` +
+              `Foto selfie Anda telah masuk antrean peninjauan admin (FIFO).\n` +
+              `Setelah disetujui, akun Anda berstatus *Photo Verified 👤* dengan kuota *50 like/hari*.\n\n` +
+              `_Catatan: Verifikasi foto membuktikan keaslian profil foto dan bukan bukti status mahasiswa resmi._`,
+              {
+                parse_mode: 'Markdown',
+                reply_markup: ProfileHandler.getProfileKeyboard(),
+              }
+            );
+          } else {
+            ctx.session.step = 'AWAITING_PROFILE_MAJOR';
+            await ctx.api.editMessageText(
+              ctx.chat.id,
+              statusMsg.message_id,
+              `✅ *Foto Verifikasi Berhasil Diterima!*\n\n` +
+              `Status: *PHOTO_PENDING* (Menunggu tinjauan admin FIFO).\n\n` +
+              `Langkah selanjutnya: Buat profil Anda.\n` +
+              `Ketik *Jurusan / Program Studi* Anda (misal: Teknik Informatika, Manajemen, Hukum, dll):`,
+              { parse_mode: 'Markdown' }
+            );
+          }
+        } else {
+          await ctx.api.editMessageText(
+            ctx.chat.id,
+            statusMsg.message_id,
+            `❌ *Verifikasi Foto Belum Berhasil*\n\n${result.message}\n\n` +
+            `Silakan kirimkan foto selfie asli yang jelas dan berpakaian sopan.`,
+            { parse_mode: 'Markdown' }
+          );
+        }
+      } catch (err: any) {
+        console.error('Error during photo verification submission:', err);
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          statusMsg.message_id,
+          'Terjadi kendala saat memproses foto verifikasi. Silakan coba kirim ulang.'
         );
       }
       return;
@@ -391,6 +583,9 @@ export function createBot(): Bot<MyContext> {
         );
       }
 
+      // Record Onboarding Completion for real cumulative growth counter (Section 2 & 3)
+      StatisticsService.recordOnboardingCompletion(user.id);
+
       ctx.session.step = 'IDLE';
       const savedProfile = db.prepare(`
         SELECT p.*, i.short_name as inst_short 
@@ -434,7 +629,7 @@ export function createBot(): Bot<MyContext> {
     }
 
     const candidate = queue[0];
-    await DiscoveryHandler.sendCard(ctx, candidate, remaining);
+    await DiscoveryHandler.sendCard(ctx, candidate, remaining.remaining);
   });
 
   // Like Callback
@@ -478,7 +673,7 @@ export function createBot(): Bot<MyContext> {
 
     const queue = MatchingService.getDiscoveryQueue(user.id, 1);
     if (queue.length > 0) {
-      await DiscoveryHandler.sendCard(ctx, queue[0], remaining);
+      await DiscoveryHandler.sendCard(ctx, queue[0], remaining.remaining);
     } else {
       await ctx.reply('✨ Anda telah melihat semua kandidat saat ini!');
     }

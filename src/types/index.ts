@@ -1,4 +1,4 @@
-// SULA Type Definitions
+// NIVA Platform Type Definitions
 
 export type InstitutionType = 'UNIVERSITY' | 'POLYTECHNIC' | 'HEALTH_ACADEMY';
 
@@ -12,15 +12,42 @@ export interface Institution {
   created_at?: string;
 }
 
-export type UserStatus = 'PENDING_VERIFICATION' | 'ACTIVE' | 'SUSPENDED' | 'BANNED' | 'DELETED';
+export type AccountStatus = 'PENDING_VERIFICATION' | 'ACTIVE' | 'SUSPENDED' | 'BANNED' | 'DELETED';
+export type UserVerificationStatus =
+  | 'UNVERIFIED'
+  | 'PHOTO_PENDING'
+  | 'PHOTO_VERIFIED'
+  | 'KTM_PENDING'
+  | 'KTM_VERIFIED'
+  | 'VERIFICATION_REJECTED'
+  | 'VERIFICATION_REVIEW';
+
+export type SubscriptionStatus =
+  | 'FREE'
+  | 'PREMIUM_PENDING'
+  | 'PREMIUM_ACTIVE'
+  | 'PREMIUM_EXPIRED'
+  | 'PREMIUM_REVOKED';
+
+export type PaymentStatus =
+  | 'NONE'
+  | 'PENDING'
+  | 'PROOF_SUBMITTED'
+  | 'UNDER_REVIEW'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'EXPIRED';
 
 export interface User {
   id: string;
   telegram_id: string;
-  status: UserStatus;
+  status: AccountStatus;
+  verification_status: UserVerificationStatus;
+  subscription_status: SubscriptionStatus;
   is_18_plus: number;
   birth_date: string | null;
   risk_score: number;
+  onboarding_completed_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -61,6 +88,17 @@ export interface StudentVerification {
   reviewer_id: string | null;
   verified_at: string | null;
   expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PhotoVerification {
+  id: string;
+  user_id: string;
+  photo_hash: string;
+  status: 'PHOTO_PENDING' | 'PHOTO_VERIFIED' | 'REJECTED';
+  review_notes?: string | null;
+  reviewer_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -125,7 +163,63 @@ export interface Report {
   updated_at: string;
 }
 
-export type AdminRole = 'SUPER_ADMIN' | 'VERIFICATION_REVIEWER' | 'MODERATOR' | 'SUPPORT' | 'AUDITOR';
+export interface SubscriptionPlan {
+  id: string;
+  name: string;
+  price: number;
+  duration_days: number;
+  badge_label: string;
+  is_active: number;
+  created_at?: string;
+}
+
+export interface PaymentRequest {
+  id: string;
+  user_id: string;
+  plan_id: string;
+  amount: number;
+  payment_method: string;
+  status: PaymentStatus;
+  proof_image_path: string | null;
+  proof_submitted_at: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_notes: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface Subscription {
+  id: string;
+  user_id: string;
+  payment_id: string | null;
+  plan_id: string;
+  status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+  starts_at: string;
+  ends_at: string;
+  created_at: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  user_id: string;
+  subject: string;
+  status: 'WAITING' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+  priority: 'LOW' | 'NORMAL' | 'HIGH';
+  assigned_to: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AdminRole =
+  | 'SUPER_ADMIN'
+  | 'PAYMENT_ADMIN'
+  | 'VERIFICATION_ADMIN'
+  | 'MODERATOR'
+  | 'SUPPORT_ADMIN'
+  | 'AUDITOR'
+  | 'VERIFICATION_REVIEWER'
+  | 'SUPPORT';
 
 export interface AdminUser {
   id: string;

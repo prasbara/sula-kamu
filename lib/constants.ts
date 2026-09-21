@@ -40,7 +40,11 @@ export const SEMARANG_INSTITUTIONS = [
   { shortName: 'STIKES Hakli', fullName: 'STIKES Hakli Semarang', type: 'PTS', area: 'Dr. Cipto' },
   { shortName: 'STIKES Kesdam', fullName: 'STIKES Kesdam IV/Diponegoro', type: 'PTS', area: 'HOS Cokroaminoto' },
   { shortName: 'STIFAR', fullName: 'Sekolah Tinggi Ilmu Farmasi Semarang', type: 'PTS', area: 'Menoreh' },
-  { shortName: 'UWHS', fullName: 'Universitas Widya Husada Semarang', type: 'PTS', area: 'Subali Raya' },
+  { shortName: 'STIKES Semarang', fullName: 'STIKES Semarang', type: 'PTS', area: 'Pedurungan' },
+  { shortName: 'UWHS', fullName: 'Universitas Widya Husada Semarang', type: 'PTS', area: 'Subali Raya / Krapyak' },
   { shortName: 'Bina Trada', fullName: 'Politeknik Bina Trada Semarang', type: 'PTS', area: 'Semarang' },
   { shortName: 'STiBISNIS', fullName: 'Politeknik STiBISNIS Semarang', type: 'PTS', area: 'Semarang' },
 ];
+
+export const FIXED_INSTITUTION_COUNT = 33;
+

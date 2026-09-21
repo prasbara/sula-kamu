@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { ImageSanitizer, SanitizedImage } from '../verification/imageSanitizer.js';
+import { ImageSanitizer, SanitizedImage } from '../verification/imageSanitizer';
 
 export interface PhotoModerationResult {
   isApproved: boolean;
