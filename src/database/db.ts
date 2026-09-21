@@ -105,6 +105,64 @@ export function initDatabase(customPath?: string): void {
       error_message TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
+    // Stranger Cam Tables
+    `CREATE TABLE IF NOT EXISTS stranger_sessions (
+      id TEXT PRIMARY KEY,
+      user_a_id TEXT NOT NULL,
+      user_b_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      ended_at TEXT,
+      end_reason TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS stranger_queue (
+      user_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'QUEUED',
+      interests TEXT DEFAULT '[]',
+      entered_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS location_confirmations (
+      user_id TEXT PRIMARY KEY,
+      region TEXT NOT NULL DEFAULT 'SEMARANG',
+      method TEXT NOT NULL,
+      confirmed_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS stranger_reports (
+      id TEXT PRIMARY KEY,
+      session_id TEXT,
+      reporter_id TEXT NOT NULL,
+      reported_user_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      details TEXT,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS stranger_blocks (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      blocked_user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(user_id, blocked_user_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS stranger_safety_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT,
+      user_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      risk_score REAL NOT NULL DEFAULT 0.0,
+      payload TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS feature_waitlist (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      contact_info TEXT NOT NULL,
+      feature TEXT NOT NULL DEFAULT 'STRANGER_CAM',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(contact_info, feature)
+    )`,
   ];
 
   for (const sql of migrations) {

@@ -513,3 +513,92 @@ CREATE TABLE IF NOT EXISTS notification_events (
 CREATE INDEX IF NOT EXISTS idx_notification_events_user ON notification_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_notification_events_type ON notification_events(event_type);
 
+-- 33. Stranger Cam Sessions
+CREATE TABLE IF NOT EXISTS stranger_sessions (
+    id TEXT PRIMARY KEY,
+    user_a_id TEXT NOT NULL,
+    user_b_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('AVAILABLE', 'QUEUED', 'MATCHING', 'CONNECTED', 'SKIPPED', 'ENDED', 'REPORTED', 'BLOCKED', 'SUSPENDED')),
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at TEXT,
+    end_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_a_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_b_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stranger_sessions_a ON stranger_sessions(user_a_id);
+CREATE INDEX IF NOT EXISTS idx_stranger_sessions_b ON stranger_sessions(user_b_id);
+CREATE INDEX IF NOT EXISTS idx_stranger_sessions_status ON stranger_sessions(status);
+
+-- 34. Stranger Cam Matching Queue
+CREATE TABLE IF NOT EXISTS stranger_queue (
+    user_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'MATCHING', 'CONNECTED')),
+    interests TEXT DEFAULT '[]',
+    entered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 35. Location Confirmations (Minimal data: Semarang region only, no permanent raw GPS)
+CREATE TABLE IF NOT EXISTS location_confirmations (
+    user_id TEXT PRIMARY KEY,
+    region TEXT NOT NULL DEFAULT 'SEMARANG',
+    method TEXT NOT NULL CHECK(method IN ('BROWSER_GEO', 'USER_CONFIRMATION', 'IP_LOOKUP')),
+    confirmed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_location_confirmations_expiry ON location_confirmations(expires_at);
+
+-- 36. Stranger Cam User Reports
+CREATE TABLE IF NOT EXISTS stranger_reports (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    reporter_id TEXT NOT NULL,
+    reported_user_id TEXT NOT NULL,
+    reason TEXT NOT NULL CHECK(reason IN (
+      'NUDITY', 'HARASSMENT', 'SCAM', 'THREAT', 'HATE_ABUSE',
+      'UNDERAGE_CONCERN', 'FAKE_IDENTITY', 'PHISHING',
+      'INAPPROPRIATE_BEHAVIOR', 'OTHER'
+    )),
+    details TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'RESOLVED', 'DISMISSED')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(reporter_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(reported_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 37. Stranger Cam User Blocks (Permanent prevention of rematch)
+CREATE TABLE IF NOT EXISTS stranger_blocks (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    blocked_user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, blocked_user_id),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(blocked_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 38. Stranger Cam Safety Events (Automated detection & anti-abuse logs)
+CREATE TABLE IF NOT EXISTS stranger_safety_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    user_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    risk_score REAL NOT NULL DEFAULT 0.0,
+    payload TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 39. Feature Waitlist (For upcoming features e.g. Stranger Cam Notify Me)
+CREATE TABLE IF NOT EXISTS feature_waitlist (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    contact_info TEXT NOT NULL,
+    feature TEXT NOT NULL DEFAULT 'STRANGER_CAM',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(contact_info, feature)
+);
+CREATE INDEX IF NOT EXISTS idx_feature_waitlist ON feature_waitlist(feature);
+
