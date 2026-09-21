@@ -68,6 +68,15 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:global.stun.twilio.com:3478' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -115,6 +124,10 @@ export default function StrangerCamApp() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
+  const peerIdRef = useRef<string>('');
+  const processedSignalsRef = useRef<Set<string>>(new Set());
   const iceCandidateBufferRef = useRef<RTCIceCandidateInit[]>([]);
   const queuePollingRef = useRef<NodeJS.Timeout | null>(null);
   const signalingPollingRef = useRef<NodeJS.Timeout | null>(null);
@@ -256,6 +269,14 @@ export default function StrangerCamApp() {
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     if (durationTimerRef.current) clearInterval(durationTimerRef.current);
     if (faceDetectionTimerRef.current) clearInterval(faceDetectionTimerRef.current);
+    if (sseRef.current) {
+      try { sseRef.current.close(); } catch {}
+      sseRef.current = null;
+    }
+    if (dataChannelRef.current) {
+      try { dataChannelRef.current.close(); } catch {}
+      dataChannelRef.current = null;
+    }
   }
 
   function stopAllMedia() {
@@ -610,16 +631,19 @@ export default function StrangerCamApp() {
 
     const isInitiator = session.user_a_id === userId;
     isInitiatorRef.current = isInitiator;
+    const partnerId = isInitiator ? session.user_b_id : session.user_a_id;
+    peerIdRef.current = partnerId;
 
     try {
       const infoRes = await fetch(`/api/stranger-cam/session/info?sessionId=${session.id}&userId=${userId}`);
       const infoData = await infoRes.json();
       if (infoData.peer) {
         setPeer(infoData.peer);
+        if (infoData.peer.id) peerIdRef.current = infoData.peer.id;
       }
     } catch {
       setPeer({
-        id: isInitiator ? session.user_b_id : session.user_a_id,
+        id: partnerId,
         displayName: 'Mahasiswa Semarang',
         isKtmVerified: false,
         region: 'SEMARANG',
@@ -627,7 +651,7 @@ export default function StrangerCamApp() {
       });
     }
 
-    setupWebRTCConnection(session.id);
+    setupWebRTCConnection(session.id, peerIdRef.current);
 
     // Start Real-Time Face Presence Detection Loop (runs every 600ms on-device)
     startFaceSafetyMonitor(session.id);
@@ -736,16 +760,7 @@ export default function StrangerCamApp() {
 
     // 2. Notify remote participant via WebRTC signal that camera was disabled
     if (currentSessionId && userId) {
-      fetch('/api/stranger-cam/session/signal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: currentSessionId,
-          senderId: userId,
-          signalType: 'CANDIDATE',
-          payload: JSON.stringify({ type: 'CAMERA_STATE', enabled: false }),
-        }),
-      }).catch(() => {});
+      sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'CAMERA_STATE', enabled: false }));
 
       // 3. Log minimal safety event (zero images stored)
       fetch('/api/stranger-cam/session/safety-event', {
@@ -759,6 +774,38 @@ export default function StrangerCamApp() {
         }),
       }).catch(() => {});
     }
+  };
+
+  // Dedicated Real-Time Multi-Channel Signaling (SSE Push + Serverless HTTP)
+  const sendSignalToPeer = (signalType: string, payloadStr: string) => {
+    if (!sessionId || !userId) return;
+    const partnerId = peerIdRef.current;
+
+    const signalObj = {
+      sessionId,
+      senderId: userId,
+      receiverId: partnerId,
+      signalType,
+      payload: payloadStr,
+      createdAt: new Date().toISOString(),
+    };
+
+    // 1. Instant Real-Time Push delivery via ntfy.sh SSE topic
+    if (partnerId) {
+      const targetTopic = `niva_sig_${sessionId}_${partnerId}`;
+      fetch(`https://ntfy.sh/${targetTopic}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(signalObj),
+      }).catch(() => {});
+    }
+
+    // 2. HTTP Serverless signaling route (with receiverId for auto-provisioning)
+    fetch('/api/stranger-cam/session/signal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signalObj),
+    }).catch(() => {});
   };
 
   // Re-enable camera with mandatory face presence check (Requirement 10 & Acceptance Test 6)
@@ -791,18 +838,7 @@ export default function StrangerCamApp() {
         setFaceWarningMessage('');
 
         // Notify peer
-        if (sessionId && userId) {
-          fetch('/api/stranger-cam/session/signal', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sessionId,
-              senderId: userId,
-              signalType: 'CANDIDATE',
-              payload: JSON.stringify({ type: 'CAMERA_STATE', enabled: true }),
-            }),
-          }).catch(() => {});
-        }
+        sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'CAMERA_STATE', enabled: true }));
       } else {
         // Face still absent or multiple faces -> shut off immediately
         localStreamRef.current?.getVideoTracks().forEach((track) => {
@@ -837,18 +873,7 @@ export default function StrangerCamApp() {
       missingTicksRef.current = 0;
       multipleTicksRef.current = 0;
 
-      if (sessionId && userId) {
-        fetch('/api/stranger-cam/session/signal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionId,
-            senderId: userId,
-            signalType: 'CANDIDATE',
-            payload: JSON.stringify({ type: 'CAMERA_STATE', enabled: false }),
-          }),
-        }).catch(() => {});
-      }
+      sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'CAMERA_STATE', enabled: false }));
     }
   };
 
@@ -862,11 +887,113 @@ export default function StrangerCamApp() {
     }
   };
 
-  const setupWebRTCConnection = async (currentSessionId: string) => {
+  // Unified Incoming Signal Processor (Used by both SSE Real-Time Push & HTTP Polling)
+  const processIncomingSignal = async (signal: any, pc: RTCPeerConnection) => {
+    try {
+      if (!signal || !signal.payload) return;
+      const payloadStr = typeof signal.payload === 'string' ? signal.payload : JSON.stringify(signal.payload);
+      const sigKey = `${signal.signalType}_${payloadStr}`;
+      if (processedSignalsRef.current.has(sigKey)) return;
+      processedSignalsRef.current.add(sigKey);
+
+      let parsed: any;
+      try {
+        parsed = typeof signal.payload === 'string' ? JSON.parse(signal.payload) : signal.payload;
+      } catch {
+        return;
+      }
+
+      // 1. In-call Chat Message
+      if (parsed.type === 'CHAT_MSG' && parsed.text) {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.sender === 'stranger' && last.text === parsed.text) return prev;
+          return [...prev, { sender: 'stranger', text: parsed.text }];
+        });
+        return;
+      }
+
+      // 2. Remote Camera State
+      if (parsed.type === 'CAMERA_STATE') {
+        setRemoteCameraOff(!parsed.enabled);
+        return;
+      }
+
+      // 3. WebRTC OFFER
+      if (signal.signalType === 'OFFER' && !isInitiatorRef.current) {
+        await pc.setRemoteDescription(new RTCSessionDescription(parsed));
+        while (iceCandidateBufferRef.current.length > 0) {
+          const cand = iceCandidateBufferRef.current.shift();
+          if (cand) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
+          }
+        }
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        sendSignalToPeer('ANSWER', JSON.stringify(answer));
+        return;
+      }
+
+      // 4. WebRTC ANSWER
+      if (signal.signalType === 'ANSWER' && isInitiatorRef.current) {
+        if (pc.signalingState === 'have-local-offer') {
+          await pc.setRemoteDescription(new RTCSessionDescription(parsed));
+          while (iceCandidateBufferRef.current.length > 0) {
+            const cand = iceCandidateBufferRef.current.shift();
+            if (cand) {
+              try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
+            }
+          }
+        }
+        return;
+      }
+
+      // 5. WebRTC ICE CANDIDATE
+      if (signal.signalType === 'CANDIDATE') {
+        if (!parsed.candidate && !parsed.sdpMid && typeof parsed.sdpMLineIndex !== 'number') {
+          return;
+        }
+        if (!pc.remoteDescription || !pc.remoteDescription.type) {
+          iceCandidateBufferRef.current.push(parsed);
+        } else {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(parsed));
+          } catch {}
+        }
+        return;
+      }
+    } catch (err) {
+      console.warn('Signal processing error:', err);
+    }
+  };
+
+  const setupWebRTCConnection = async (currentSessionId: string, partnerId: string) => {
     try {
       const pc = new RTCPeerConnection(ICE_SERVERS);
       peerConnectionRef.current = pc;
       iceCandidateBufferRef.current = [];
+      processedSignalsRef.current = new Set();
+
+      // Negotiated DataChannel for instant 0ms P2P chat between peers
+      try {
+        const dc = pc.createDataChannel('niva_chat', { negotiated: true, id: 0 });
+        dataChannelRef.current = dc;
+        dc.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'CHAT_MSG' && data.text) {
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                if (last && last.sender === 'stranger' && last.text === data.text) return prev;
+                return [...prev, { sender: 'stranger', text: data.text }];
+              });
+            }
+          } catch {}
+        };
+      } catch (dcErr) {
+        console.warn('DataChannel init notice:', dcErr);
+      }
 
       const stream = await ensureActiveLocalMedia();
       if (stream) {
@@ -911,42 +1038,48 @@ export default function StrangerCamApp() {
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          fetch('/api/stranger-cam/session/signal', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sessionId: currentSessionId,
-              senderId: userId,
-              signalType: 'CANDIDATE',
-              payload: JSON.stringify(event.candidate),
-            }),
-          }).catch(() => {});
+          sendSignalToPeer('CANDIDATE', JSON.stringify(event.candidate));
         }
       };
 
       if (isInitiatorRef.current) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-
-        await fetch('/api/stranger-cam/session/signal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionId: currentSessionId,
-            senderId: userId,
-            signalType: 'OFFER',
-            payload: JSON.stringify(offer),
-          }),
-        });
+        sendSignalToPeer('OFFER', JSON.stringify(offer));
       }
 
-      startSignalingAndHeartbeat(currentSessionId, pc);
+      startSignalingAndHeartbeat(currentSessionId, partnerId, pc);
     } catch {
       setErrorMessage('Gagal membentuk koneksi WebRTC P2P.');
     }
   };
 
-  const startSignalingAndHeartbeat = (currentSessionId: string, pc: RTCPeerConnection) => {
+  const startSignalingAndHeartbeat = (currentSessionId: string, partnerId: string, pc: RTCPeerConnection) => {
+    // 1. Instant Real-Time Push Listener via ntfy.sh SSE topic
+    try {
+      if (sseRef.current) {
+        try { sseRef.current.close(); } catch {}
+        sseRef.current = null;
+      }
+      const myTopic = `niva_sig_${currentSessionId}_${userId}`;
+      const sse = new EventSource(`https://ntfy.sh/${myTopic}/sse`);
+      sseRef.current = sse;
+      sse.onmessage = (event) => {
+        try {
+          const raw = JSON.parse(event.data);
+          if (raw && raw.message) {
+            const inner = JSON.parse(raw.message);
+            processIncomingSignal(inner, pc);
+          } else if (raw && raw.signalType) {
+            processIncomingSignal(raw, pc);
+          }
+        } catch {}
+      };
+    } catch (sseErr) {
+      console.warn('SSE connection notice:', sseErr);
+    }
+
+    // 2. Parallel HTTP Polling as fallback
     signalingPollingRef.current = setInterval(async () => {
       try {
         const res = await fetch(
@@ -959,63 +1092,15 @@ export default function StrangerCamApp() {
         if (data.signals && data.signals.length > 0) {
           for (const signal of data.signals) {
             lastSignalTimeRef.current = signal.createdAt;
-            const parsed = JSON.parse(signal.payload);
-
-            if (parsed.type === 'CAMERA_STATE') {
-              setRemoteCameraOff(!parsed.enabled);
-              continue;
-            }
-
-            if (signal.signalType === 'OFFER' && !isInitiatorRef.current) {
-              await pc.setRemoteDescription(new RTCSessionDescription(parsed));
-              while (iceCandidateBufferRef.current.length > 0) {
-                const cand = iceCandidateBufferRef.current.shift();
-                if (cand) {
-                  try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
-                }
-              }
-
-              const answer = await pc.createAnswer();
-              await pc.setLocalDescription(answer);
-
-              await fetch('/api/stranger-cam/session/signal', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  sessionId: currentSessionId,
-                  senderId: userId,
-                  signalType: 'ANSWER',
-                  payload: JSON.stringify(answer),
-                }),
-              });
-            } else if (signal.signalType === 'ANSWER' && isInitiatorRef.current) {
-              if (pc.signalingState === 'have-local-offer') {
-                await pc.setRemoteDescription(new RTCSessionDescription(parsed));
-                while (iceCandidateBufferRef.current.length > 0) {
-                  const cand = iceCandidateBufferRef.current.shift();
-                  if (cand) {
-                    try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
-                  }
-                }
-              }
-            } else if (signal.signalType === 'CANDIDATE') {
-              if (!pc.remoteDescription || !pc.remoteDescription.type) {
-                iceCandidateBufferRef.current.push(parsed);
-              } else {
-                try {
-                  await pc.addIceCandidate(new RTCIceCandidate(parsed));
-                } catch {
-                  // Ignore candidate buffering
-                }
-              }
-            }
+            processIncomingSignal(signal, pc);
           }
         }
       } catch {
         // Retry polling
       }
-    }, 500);
+    }, 800);
 
+    // 3. Heartbeat
     heartbeatRef.current = setInterval(async () => {
       try {
         const res = await fetch('/api/stranger-cam/session/heartbeat', {
@@ -1138,18 +1223,15 @@ export default function StrangerCamApp() {
     setInputText('');
     setChatWarning(null);
 
-    if (sessionId && peerConnectionRef.current) {
-      fetch('/api/stranger-cam/session/signal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          senderId: userId,
-          signalType: 'CANDIDATE',
-          payload: JSON.stringify({ type: 'CHAT_MSG', text }),
-        }),
-      }).catch(() => {});
+    // 1. Instant Direct P2P via WebRTC DataChannel
+    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+      try {
+        dataChannelRef.current.send(JSON.stringify({ type: 'CHAT_MSG', text }));
+      } catch {}
     }
+
+    // 2. Real-time signaling channel delivery
+    sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'CHAT_MSG', text }));
   };
 
   const formatDuration = (seconds: number) => {

@@ -735,16 +735,30 @@ export class StrangerCamService {
     sessionId: string,
     senderId: string,
     signalType: 'OFFER' | 'ANSWER' | 'CANDIDATE',
-    payload: string
+    payload: string,
+    explicitReceiverId?: string
   ): { success: boolean; signalId: string } {
     const db = getDatabase();
 
     // Verify session and determine receiver
-    const session = db.prepare(`
+    let session = db.prepare(`
       SELECT id, user_a_id, user_b_id, status
       FROM stranger_sessions
       WHERE id = ?
     `).get(sessionId) as any;
+
+    if (!session && explicitReceiverId) {
+      try {
+        db.prepare(`
+          INSERT INTO stranger_sessions (id, user_a_id, user_b_id, status, started_at)
+          VALUES (?, ?, ?, 'CONNECTED', datetime('now'))
+          ON CONFLICT(id) DO UPDATE SET status = 'CONNECTED'
+        `).run(sessionId, senderId, explicitReceiverId);
+        session = { id: sessionId, user_a_id: senderId, user_b_id: explicitReceiverId, status: 'CONNECTED' };
+      } catch (sessErr) {
+        console.warn('Auto-provision session notice in sendSignal:', sessErr);
+      }
+    }
 
     if (!session) {
       throw new Error('Sesi tidak ditemukan.');
@@ -754,12 +768,12 @@ export class StrangerCamService {
       throw new Error('Sesi tidak lagi aktif.');
     }
 
-    let receiverId = '';
+    let receiverId = explicitReceiverId || '';
     if (session.user_a_id === senderId) {
       receiverId = session.user_b_id;
     } else if (session.user_b_id === senderId) {
       receiverId = session.user_a_id;
-    } else {
+    } else if (!receiverId) {
       throw new Error('Anda bukan peserta dalam sesi ini.');
     }
 

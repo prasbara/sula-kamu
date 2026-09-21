@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { sessionId, senderId, signalType, payload } = body;
+    const { sessionId, senderId, receiverId, signalType, payload } = body;
 
     if (!sessionId || !senderId || !signalType || !payload) {
       return NextResponse.json(
@@ -19,7 +19,8 @@ export async function POST(req: NextRequest) {
       sessionId,
       senderId,
       signalType,
-      typeof payload === 'string' ? payload : JSON.stringify(payload)
+      typeof payload === 'string' ? payload : JSON.stringify(payload),
+      receiverId
     );
 
     return NextResponse.json(result);
