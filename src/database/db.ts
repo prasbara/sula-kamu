@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config/index';
 
@@ -9,9 +10,56 @@ const __dirname = path.dirname(__filename);
 
 let dbInstance: DatabaseSync | null = null;
 let currentDbPath: string = config.DATABASE_PATH;
+let isInitializing = false;
+
+function ensureDatabaseReady(db: DatabaseSync, targetPath: string): void {
+  if (isInitializing) return;
+  isInitializing = true;
+  try {
+    const tableRow = db.prepare("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='admin_users'").get() as { count: number } | undefined;
+    if (!tableRow || Number(tableRow.count) === 0) {
+      initDatabase(targetPath);
+    }
+    const adminRow = db.prepare("SELECT count(*) as count FROM admin_users").get() as { count: number } | undefined;
+    if (!adminRow || Number(adminRow.count) === 0) {
+      const hash = crypto.createHash('sha256').update('SulaAdmin2026!').digest('hex');
+      const insertAdmin = db.prepare(`
+        INSERT OR IGNORE INTO admin_users (id, username, password_hash, display_name, role)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      insertAdmin.run('admin-super-01', 'superadmin', hash, 'NIVA Head Admin', 'SUPER_ADMIN');
+      insertAdmin.run('admin-pay-01', 'payment1', hash, 'Payment Reviewer 1', 'PAYMENT_ADMIN');
+      insertAdmin.run('admin-verifier-01', 'verifier1', hash, 'Verification Admin 1', 'VERIFICATION_ADMIN');
+      insertAdmin.run('admin-mod-01', 'moderator1', hash, 'Trust & Safety Moderator', 'MODERATOR');
+      insertAdmin.run('admin-support-01', 'support1', hash, 'Support Specialist 1', 'SUPPORT_ADMIN');
+      insertAdmin.run('admin-auditor-01', 'auditor1', hash, 'Compliance Auditor', 'AUDITOR');
+    }
+  } catch {
+    try {
+      initDatabase(targetPath);
+    } catch {}
+  } finally {
+    isInitializing = false;
+  }
+}
 
 export function getDatabase(customPath?: string): DatabaseSync {
-  const targetPath = customPath || process.env.DATABASE_PATH || config.DATABASE_PATH;
+  let targetPath = customPath || process.env.DATABASE_PATH || config.DATABASE_PATH;
+
+  // On Vercel / serverless runtime, /var/task is read-only.
+  // The only writable filesystem location is /tmp. Redirect to /tmp if running in serverless.
+  const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  if (isServerless && (!targetPath.startsWith('/tmp') || targetPath.startsWith('/var/task'))) {
+    targetPath = '/tmp/data/sula.db';
+  }
+
+  const dir = path.dirname(targetPath);
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  } catch {}
+
   if (!dbInstance || currentDbPath !== targetPath) {
     if (dbInstance) {
       try { dbInstance.close(); } catch {}
@@ -20,6 +68,8 @@ export function getDatabase(customPath?: string): DatabaseSync {
     dbInstance = new DatabaseSync(targetPath);
     dbInstance.exec('PRAGMA foreign_keys = ON;');
     dbInstance.exec('PRAGMA journal_mode = WAL;');
+
+    ensureDatabaseReady(dbInstance, targetPath);
   }
   return dbInstance;
 }
@@ -173,10 +223,18 @@ export function initDatabase(customPath?: string): void {
     }
   }
 
-  const schemaPath = path.join(__dirname, 'schema.sql');
-  const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-  
-  db.exec(schemaSql);
+  let schemaPath = path.join(__dirname, 'schema.sql');
+  if (!fs.existsSync(schemaPath)) {
+    schemaPath = path.resolve(process.cwd(), 'src', 'database', 'schema.sql');
+  }
+  if (!fs.existsSync(schemaPath)) {
+    schemaPath = path.resolve(process.cwd(), 'schema.sql');
+  }
+
+  if (fs.existsSync(schemaPath)) {
+    const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+    db.exec(schemaSql);
+  }
 
   // Run migrations again after schema creation to ensure any new columns exist
   for (const sql of migrations) {

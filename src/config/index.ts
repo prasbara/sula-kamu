@@ -9,20 +9,21 @@ const __dirname = path.dirname(__filename);
 // Load .env if present
 dotenv.config();
 
-// Ensure data and uploads directories exist when running on writable filesystem
-const DATA_DIR = process.env.DATA_DIR || path.resolve(process.cwd(), 'data');
-const UPLOADS_DIR = process.env.UPLOADS_DIR || path.resolve(process.cwd(), 'uploads');
+// Detect serverless environment (e.g. Vercel Lambda /var/task where root is read-only)
+const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const DATA_DIR = process.env.DATA_DIR || (isServerless ? '/tmp/data' : path.resolve(process.cwd(), 'data'));
+const UPLOADS_DIR = process.env.UPLOADS_DIR || (isServerless ? '/tmp/uploads' : path.resolve(process.cwd(), 'uploads'));
 
 try {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 } catch {
-  // Read-only serverless filesystem (e.g. Vercel Lambda /var/task)
+  // Read-only serverless filesystem fallback
 }
 
 try {
   if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 } catch {
-  // Read-only serverless filesystem
+  // Read-only serverless filesystem fallback
 }
 
 export const config = {
