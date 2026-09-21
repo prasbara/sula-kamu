@@ -24,6 +24,7 @@ import {
   X,
   Eye,
   EyeOff,
+  Volume2,
 } from 'lucide-react';
 import {
   detectFacePresence,
@@ -67,7 +68,10 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:global.stun.twilio.com:3478' },
+    { urls: 'stun:stun.services.mozilla.com' },
+    { urls: 'stun:openrelay.metered.ca:80' },
     {
       urls: [
         'turn:openrelay.metered.ca:80',
@@ -86,7 +90,14 @@ const DEFAULT_GRACE_SECONDS = 6;
 export default function StrangerCamApp() {
   // Navigation & session state
   const [step, setStep] = useState<Step>('AGE_GATE');
-  const [userId, setUserId] = useState<string>('');
+  const [userId, setUserId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('niva_stranger_user_id') || '';
+    }
+    return '';
+  });
+  const userIdRef = useRef<string>('');
+  const sessionIdRef = useRef<string>('');
   const [alias, setAlias] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('niva_stranger_alias');
@@ -107,7 +118,9 @@ export default function StrangerCamApp() {
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [remoteCameraOff, setRemoteCameraOff] = useState(false);
+  const [audioMutedByBrowser, setAudioMutedByBrowser] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
+  const [p2pConnected, setP2pConnected] = useState(false);
 
   // Face Visibility Safety Gate state machine
   const [cameraSafetyState, setCameraSafetyState] = useState<CameraSafetyState>('CAMERA_REQUESTING');
@@ -128,6 +141,7 @@ export default function StrangerCamApp() {
   // WebRTC & Media references
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
@@ -140,10 +154,21 @@ export default function StrangerCamApp() {
   const signalingPollingRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
   const durationTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const offerRetryTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSignalTimeRef = useRef<string | undefined>(undefined);
   const isInitiatorRef = useRef<boolean>(false);
   const isSkippingRef = useRef<boolean>(false);
   const unloadHandlerRef = useRef<(() => void) | null>(null);
+
+  // Keep userIdRef in sync
+  useEffect(() => {
+    if (userId) {
+      userIdRef.current = userId;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('niva_stranger_user_id', userId);
+      }
+    }
+  }, [userId]);
 
   // Synchronous callback refs to guarantee immediate DOM attachment
   const setLocalVideoRef = useCallback((el: HTMLVideoElement | null) => {
@@ -162,7 +187,15 @@ export default function StrangerCamApp() {
       if (el.srcObject !== remoteStreamRef.current) {
         el.srcObject = remoteStreamRef.current;
       }
-      el.play().catch(() => {});
+      const p = el.play();
+      if (p !== undefined) {
+        p.catch((err) => {
+          console.warn('Remote video unmuted autoplay prevented by browser (iOS/Safari fallback):', err);
+          el.muted = true;
+          el.play().catch(() => {});
+          setAudioMutedByBrowser(true);
+        });
+      }
     }
   }, []);
 
@@ -239,8 +272,12 @@ export default function StrangerCamApp() {
 
   // 1. Initialize user from localStorage / cookies
   useEffect(() => {
-    const savedUserId = localStorage.getItem('niva_stranger_user_id');
-    const savedAlias = localStorage.getItem('niva_stranger_alias');
+    const savedUserId = typeof window !== 'undefined' ? localStorage.getItem('niva_stranger_user_id') : null;
+    const savedAlias = typeof window !== 'undefined' ? localStorage.getItem('niva_stranger_alias') : null;
+    if (savedUserId) {
+      userIdRef.current = savedUserId;
+      setUserId(savedUserId);
+    }
     if (savedAlias) setAlias(savedAlias);
 
     async function checkExistingAuth() {
@@ -248,6 +285,7 @@ export default function StrangerCamApp() {
         const res = await fetch(`/api/stranger-cam/auth?userId=${savedUserId || ''}`);
         const data = await res.json();
         if (data.authenticated && data.user) {
+          userIdRef.current = data.user.id;
           setUserId(data.user.id);
           setIs18Plus(data.user.is18Plus);
           if (data.user.displayName) setAlias(data.user.displayName);
@@ -276,7 +314,7 @@ export default function StrangerCamApp() {
   useEffect(() => {
     async function fetchOnlineCount() {
       try {
-        const uid = userId || localStorage.getItem('niva_stranger_user_id') || '';
+        const uid = userIdRef.current || userId || (typeof window !== 'undefined' ? localStorage.getItem('niva_stranger_user_id') : '') || '';
         const res = await fetch(`/api/stranger-cam/online?userId=${encodeURIComponent(uid)}`);
         const data = await res.json();
         if (data.success && typeof data.onlineCount === 'number') {
@@ -296,6 +334,10 @@ export default function StrangerCamApp() {
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     if (durationTimerRef.current) clearInterval(durationTimerRef.current);
     if (faceDetectionTimerRef.current) clearInterval(faceDetectionTimerRef.current);
+    if (offerRetryTimerRef.current) {
+      clearTimeout(offerRetryTimerRef.current);
+      offerRetryTimerRef.current = null;
+    }
     if (sseRef.current) {
       try { sseRef.current.close(); } catch {}
       sseRef.current = null;
@@ -336,11 +378,12 @@ export default function StrangerCamApp() {
 
     try {
       const cleanAlias = alias.trim() || `Stranger #${Math.floor(1000 + Math.random() * 9000)}`;
+      const activeUid = userIdRef.current || userId || undefined;
       const res = await fetch('/api/stranger-cam/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: userId || undefined,
+          userId: activeUid,
           alias: cleanAlias,
           confirmAge: true,
           is18Plus: true,
@@ -350,6 +393,7 @@ export default function StrangerCamApp() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Gagal memulai Stranger Cam.');
 
+      userIdRef.current = data.user.id;
       setUserId(data.user.id);
       localStorage.setItem('niva_stranger_user_id', data.user.id);
       localStorage.setItem('niva_stranger_alias', data.user.displayName || cleanAlias);
@@ -511,7 +555,7 @@ export default function StrangerCamApp() {
       // Ensure media is alive
       await ensureActiveLocalMedia();
 
-      let currentUid = userId || localStorage.getItem('niva_stranger_user_id');
+      let currentUid = userIdRef.current || userId || (typeof window !== 'undefined' ? localStorage.getItem('niva_stranger_user_id') : '') || '';
       if (!currentUid) {
         const authRes = await fetch('/api/stranger-cam/auth', {
           method: 'POST',
@@ -525,9 +569,12 @@ export default function StrangerCamApp() {
         const authData = await authRes.json();
         if (authData.user) {
           currentUid = authData.user.id;
+          userIdRef.current = authData.user.id;
           setUserId(authData.user.id);
           localStorage.setItem('niva_stranger_user_id', authData.user.id);
         }
+      } else {
+        userIdRef.current = currentUid;
       }
 
       // Guarantee Semarang location is confirmed for this serverless instance
@@ -569,6 +616,7 @@ export default function StrangerCamApp() {
           const authData = await authRes.json();
           const retryUid = authData.user?.id || currentUid;
           if (authData.user?.id) {
+            userIdRef.current = authData.user.id;
             setUserId(authData.user.id);
             localStorage.setItem('niva_stranger_user_id', authData.user.id);
           }
@@ -585,7 +633,7 @@ export default function StrangerCamApp() {
           const retryData = await retryRes.json();
           if (!retryRes.ok) throw new Error(retryData.message || 'Gagal masuk antrean.');
           if (retryData.status === 'CONNECTED' && retryData.session) {
-            initiateCall(retryData.session);
+            initiateCall(retryData.session, retryUid);
             return;
           }
         } else {
@@ -594,7 +642,7 @@ export default function StrangerCamApp() {
       }
 
       if (data.status === 'CONNECTED' && data.session) {
-        initiateCall(data.session);
+        initiateCall(data.session, currentUid);
       } else {
         queuePollingRef.current = setInterval(async () => {
           try {
@@ -612,7 +660,7 @@ export default function StrangerCamApp() {
             const pollData = await pollRes.json();
             if (pollData.status === 'CONNECTED' && pollData.session) {
               clearInterval(queuePollingRef.current!);
-              initiateCall(pollData.session);
+              initiateCall(pollData.session, currentUid);
             }
           } catch {
             // Heartbeat retry
@@ -627,11 +675,12 @@ export default function StrangerCamApp() {
 
   const handleLeaveQueue = async () => {
     clearAllTimers();
+    const activeUid = userIdRef.current || userId || '';
     try {
       await fetch('/api/stranger-cam/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'LEAVE', userId }),
+        body: JSON.stringify({ action: 'LEAVE', userId: activeUid }),
       });
     } catch {
       // Ignore
@@ -644,14 +693,22 @@ export default function StrangerCamApp() {
   };
 
   // ── Step 5: WebRTC Call & Real-Time Face Safety Loop ───────────────────────
-  const initiateCall = async (session: any) => {
+  const initiateCall = async (session: any, explicitUid?: string) => {
     clearAllTimers();
     isSkippingRef.current = false;
+    const resolvedUid = explicitUid || userIdRef.current || userId || (typeof window !== 'undefined' ? localStorage.getItem('niva_stranger_user_id') : '') || '';
+    userIdRef.current = resolvedUid;
+    if (resolvedUid && resolvedUid !== userId) {
+      setUserId(resolvedUid);
+    }
+    sessionIdRef.current = session.id;
     setSessionId(session.id);
     setStep('CALL');
     setCallDuration(0);
     setRemoteCameraOff(false);
     setIsCameraOff(false);
+    setAudioMutedByBrowser(false);
+    setP2pConnected(false);
     setCameraSafetyState('CAMERA_ON_FACE_PRESENT');
     setFaceWarningCountdown(null);
     setFaceWarningMessage('');
@@ -671,13 +728,26 @@ export default function StrangerCamApp() {
       setCallDuration((prev) => prev + 1);
     }, 1000);
 
-    const isInitiator = session.user_a_id === userId;
+    let isInitiator = false;
+    let partnerId = '';
+
+    if (session.user_a_id === resolvedUid) {
+      isInitiator = true;
+      partnerId = session.user_b_id;
+    } else if (session.user_b_id === resolvedUid) {
+      isInitiator = false;
+      partnerId = session.user_a_id;
+    } else {
+      // Deterministic role assignment if ID not matching user_a/b directly
+      isInitiator = (session.user_a_id || '') < (session.user_b_id || '');
+      partnerId = isInitiator ? session.user_b_id : session.user_a_id;
+    }
+
     isInitiatorRef.current = isInitiator;
-    const partnerId = isInitiator ? session.user_b_id : session.user_a_id;
     peerIdRef.current = partnerId;
 
     try {
-      const infoRes = await fetch(`/api/stranger-cam/session/info?sessionId=${session.id}&userId=${userId}`);
+      const infoRes = await fetch(`/api/stranger-cam/session/info?sessionId=${session.id}&userId=${resolvedUid}`);
       const infoData = await infoRes.json();
       if (infoData.peer) {
         setPeer(infoData.peer);
@@ -701,7 +771,7 @@ export default function StrangerCamApp() {
         }
         sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'PEER_LEFT', reason: 'Lawan bicara menutup halaman.' }));
         if (navigator.sendBeacon) {
-          navigator.sendBeacon('/api/stranger-cam/session/action', JSON.stringify({ action: 'SKIP', sessionId: session.id, userId }));
+          navigator.sendBeacon('/api/stranger-cam/session/action', JSON.stringify({ action: 'SKIP', sessionId: session.id, userId: resolvedUid }));
         }
       } catch {}
     };
@@ -709,7 +779,7 @@ export default function StrangerCamApp() {
     window.addEventListener('beforeunload', handleWindowUnload);
     window.addEventListener('pagehide', handleWindowUnload);
 
-    setupWebRTCConnection(session.id, peerIdRef.current);
+    setupWebRTCConnection(session.id, peerIdRef.current, resolvedUid);
 
     // Start Real-Time Face Presence Detection Loop (runs every 600ms on-device)
     startFaceSafetyMonitor(session.id);
@@ -817,7 +887,8 @@ export default function StrangerCamApp() {
     multipleTicksRef.current = 0;
 
     // 2. Notify remote participant via WebRTC signal that camera was disabled
-    if (currentSessionId && userId) {
+    const activeUid = userIdRef.current || userId;
+    if (currentSessionId && activeUid) {
       sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'CAMERA_STATE', enabled: false }));
 
       // 3. Log minimal safety event (zero images stored)
@@ -826,7 +897,7 @@ export default function StrangerCamApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId: currentSessionId,
-          userId,
+          userId: activeUid,
           eventType,
           reason,
         }),
@@ -836,12 +907,14 @@ export default function StrangerCamApp() {
 
   // Dedicated Real-Time Multi-Channel Signaling (SSE Push + Serverless HTTP)
   const sendSignalToPeer = (signalType: string, payloadStr: string) => {
-    if (!sessionId || !userId) return;
+    const currentSession = sessionIdRef.current || sessionId;
+    const currentUid = userIdRef.current || userId || (typeof window !== 'undefined' ? localStorage.getItem('niva_stranger_user_id') : '') || '';
     const partnerId = peerIdRef.current;
+    if (!currentSession || !currentUid) return;
 
     const signalObj = {
-      sessionId,
-      senderId: userId,
+      sessionId: currentSession,
+      senderId: currentUid,
       receiverId: partnerId,
       signalType,
       payload: payloadStr,
@@ -850,7 +923,7 @@ export default function StrangerCamApp() {
 
     // 1. Instant Real-Time Push delivery via ntfy.sh SSE topic
     if (partnerId) {
-      const targetTopic = `niva_sig_${sessionId}_${partnerId}`;
+      const targetTopic = `niva_sig_${currentSession}_${partnerId}`;
       fetch(`https://ntfy.sh/${targetTopic}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -858,7 +931,7 @@ export default function StrangerCamApp() {
       }).catch(() => {});
     }
 
-    // 2. HTTP Serverless signaling route (with receiverId for auto-provisioning)
+    // 2. HTTP Serverless signaling route (with receiverId for auto-provisioning / test audits)
     fetch('/api/stranger-cam/session/signal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -956,6 +1029,7 @@ export default function StrangerCamApp() {
       peerConnectionRef.current = null;
     }
     remoteStreamRef.current = null;
+    setP2pConnected(false);
 
     setMessages((prev) => [
       ...prev,
@@ -993,11 +1067,15 @@ export default function StrangerCamApp() {
 
       // 1. In-call Chat Message
       if (parsed.type === 'CHAT_MSG' && parsed.text) {
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.sender === 'stranger' && last.text === parsed.text) return prev;
-          return [...prev, { sender: 'stranger', text: parsed.text }];
-        });
+        const msgKey = parsed.id || parsed.text;
+        if (!processedSignalsRef.current.has(`msg_${msgKey}`)) {
+          processedSignalsRef.current.add(`msg_${msgKey}`);
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.sender === 'stranger' && last.text === parsed.text) return prev;
+            return [...prev, { sender: 'stranger', text: parsed.text }];
+          });
+        }
         return;
       }
 
@@ -1009,17 +1087,19 @@ export default function StrangerCamApp() {
 
       // 3. WebRTC OFFER
       if (signal.signalType === 'OFFER' && !isInitiatorRef.current) {
-        await pc.setRemoteDescription(new RTCSessionDescription(parsed));
-        while (iceCandidateBufferRef.current.length > 0) {
-          const cand = iceCandidateBufferRef.current.shift();
-          if (cand) {
-            try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
+        if (pc.signalingState === 'stable' || pc.signalingState === 'have-remote-offer') {
+          await pc.setRemoteDescription(new RTCSessionDescription(parsed));
+          while (iceCandidateBufferRef.current.length > 0) {
+            const cand = iceCandidateBufferRef.current.shift();
+            if (cand) {
+              try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
+            }
           }
-        }
 
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        sendSignalToPeer('ANSWER', JSON.stringify(answer));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          sendSignalToPeer('ANSWER', JSON.stringify(answer));
+        }
         return;
       }
 
@@ -1027,6 +1107,10 @@ export default function StrangerCamApp() {
       if (signal.signalType === 'ANSWER' && isInitiatorRef.current) {
         if (pc.signalingState === 'have-local-offer') {
           await pc.setRemoteDescription(new RTCSessionDescription(parsed));
+          if (offerRetryTimerRef.current) {
+            clearTimeout(offerRetryTimerRef.current);
+            offerRetryTimerRef.current = null;
+          }
           while (iceCandidateBufferRef.current.length > 0) {
             const cand = iceCandidateBufferRef.current.shift();
             if (cand) {
@@ -1056,7 +1140,7 @@ export default function StrangerCamApp() {
     }
   };
 
-  const setupWebRTCConnection = async (currentSessionId: string, partnerId: string) => {
+  const setupWebRTCConnection = async (currentSessionId: string, partnerId: string, myUid: string) => {
     try {
       const pc = new RTCPeerConnection(ICE_SERVERS);
       peerConnectionRef.current = pc;
@@ -1066,14 +1150,19 @@ export default function StrangerCamApp() {
       // Listen for peer disconnection or drop to immediately auto-skip
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
-        if (s === 'disconnected' || s === 'failed' || s === 'closed') {
+        if (s === 'connected') {
+          setP2pConnected(true);
+        } else if (s === 'disconnected' || s === 'failed' || s === 'closed') {
+          setP2pConnected(false);
           triggerAutoSkipToNext('Koneksi lawan bicara terputus. Mencari lawan bicara baru...');
         }
       };
 
       pc.oniceconnectionstatechange = () => {
         const s = pc.iceConnectionState;
-        if (s === 'disconnected' || s === 'failed') {
+        if (s === 'connected' || s === 'completed') {
+          setP2pConnected(true);
+        } else if (s === 'disconnected' || s === 'failed') {
           triggerAutoSkipToNext('Koneksi lawan bicara terputus. Mencari lawan bicara baru...');
         }
       };
@@ -1090,11 +1179,15 @@ export default function StrangerCamApp() {
               return;
             }
             if (data.type === 'CHAT_MSG' && data.text) {
-              setMessages((prev) => {
-                const last = prev[prev.length - 1];
-                if (last && last.sender === 'stranger' && last.text === data.text) return prev;
-                return [...prev, { sender: 'stranger', text: data.text }];
-              });
+              const msgKey = data.id || data.text;
+              if (!processedSignalsRef.current.has(`msg_${msgKey}`)) {
+                processedSignalsRef.current.add(`msg_${msgKey}`);
+                setMessages((prev) => {
+                  const last = prev[prev.length - 1];
+                  if (last && last.sender === 'stranger' && last.text === data.text) return prev;
+                  return [...prev, { sender: 'stranger', text: data.text }];
+                });
+              }
             }
           } catch {}
         };
@@ -1133,7 +1226,24 @@ export default function StrangerCamApp() {
           if (remoteVideoRef.current.srcObject !== targetStream) {
             remoteVideoRef.current.srcObject = targetStream;
           }
-          remoteVideoRef.current.play().catch(() => {});
+          const p = remoteVideoRef.current.play();
+          if (p !== undefined) {
+            p.catch((err) => {
+              console.warn('Autoplay prevented on video, falling back to muted video play:', err);
+              if (remoteVideoRef.current) {
+                remoteVideoRef.current.muted = true;
+                remoteVideoRef.current.play().catch(() => {});
+              }
+              setAudioMutedByBrowser(true);
+            });
+          }
+        }
+
+        if (event.track.kind === 'audio' && remoteAudioRef.current) {
+          if (remoteAudioRef.current.srcObject !== targetStream) {
+            remoteAudioRef.current.srcObject = targetStream;
+          }
+          remoteAudioRef.current.play().catch(() => {});
         }
 
         event.track.onunmute = () => {
@@ -1152,27 +1262,43 @@ export default function StrangerCamApp() {
         }
       };
 
+      // Start signaling receiver FIRST before sending offer
+      startSignalingAndHeartbeat(currentSessionId, partnerId, pc, myUid);
+
       if (isInitiatorRef.current) {
-        const offer = await pc.createOffer();
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true,
+        });
         await pc.setLocalDescription(offer);
         sendSignalToPeer('OFFER', JSON.stringify(offer));
-      }
 
-      startSignalingAndHeartbeat(currentSessionId, partnerId, pc);
+        // Resilient Offer Resend: after 3.5s if still waiting for answer, resend
+        offerRetryTimerRef.current = setTimeout(() => {
+          if (
+            peerConnectionRef.current &&
+            peerConnectionRef.current.signalingState === 'have-local-offer' &&
+            peerConnectionRef.current.iceConnectionState !== 'connected'
+          ) {
+            console.log('Resending WebRTC OFFER to guarantee handshake...');
+            sendSignalToPeer('OFFER', JSON.stringify(peerConnectionRef.current.localDescription));
+          }
+        }, 3500);
+      }
     } catch {
       setErrorMessage('Gagal membentuk koneksi WebRTC P2P.');
     }
   };
 
-  const startSignalingAndHeartbeat = (currentSessionId: string, partnerId: string, pc: RTCPeerConnection) => {
-    // 1. Instant Real-Time Push Listener via ntfy.sh SSE topic
+  const startSignalingAndHeartbeat = (currentSessionId: string, partnerId: string, pc: RTCPeerConnection, myUid: string) => {
+    // 1. Instant Real-Time Push Listener via ntfy.sh SSE topic with ?since=all
     try {
       if (sseRef.current) {
         try { sseRef.current.close(); } catch {}
         sseRef.current = null;
       }
-      const myTopic = `niva_sig_${currentSessionId}_${userId}`;
-      const sse = new EventSource(`https://ntfy.sh/${myTopic}/sse`);
+      const myTopic = `niva_sig_${currentSessionId}_${myUid}`;
+      const sse = new EventSource(`https://ntfy.sh/${myTopic}/sse?since=all`);
       sseRef.current = sse;
       sse.onmessage = (event) => {
         try {
@@ -1189,43 +1315,57 @@ export default function StrangerCamApp() {
       console.warn('SSE connection notice:', sseErr);
     }
 
-    // 2. Parallel HTTP Polling as fallback
+    // 2. Multi-Channel Fast Polling fallback:
+    // Polls ntfy JSON (since=all) AND serverless signal API to guarantee 100% signal delivery across Vercel containers
     signalingPollingRef.current = setInterval(async () => {
+      // 2a. Poll ntfy stored messages
+      try {
+        const myTopic = `niva_sig_${currentSessionId}_${myUid}`;
+        const ntfyRes = await fetch(`https://ntfy.sh/${myTopic}/json?poll=1&since=all`);
+        const text = await ntfyRes.text();
+        const lines = text.trim().split('\n');
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const item = JSON.parse(line);
+            if (item && item.message) {
+              const inner = JSON.parse(item.message);
+              processIncomingSignal(inner, pc);
+            }
+          } catch {}
+        }
+      } catch {}
+
+      // 2b. Poll internal API route
       try {
         const res = await fetch(
-          `/api/stranger-cam/session/signal?sessionId=${currentSessionId}&receiverId=${userId}${
+          `/api/stranger-cam/session/signal?sessionId=${currentSessionId}&receiverId=${myUid}${
             lastSignalTimeRef.current ? `&after=${encodeURIComponent(lastSignalTimeRef.current)}` : ''
           }`
         );
         const data = await res.json();
-
         if (data.signals && data.signals.length > 0) {
           for (const signal of data.signals) {
             lastSignalTimeRef.current = signal.createdAt;
             processIncomingSignal(signal, pc);
           }
         }
-      } catch {
-        // Retry polling
-      }
-    }, 800);
+      } catch {}
+    }, 1000);
 
-    // 3. Heartbeat (every 2000ms for fast exit detection)
+    // 3. Heartbeat (every 2000ms for exit detection)
     heartbeatRef.current = setInterval(async () => {
       try {
         const res = await fetch('/api/stranger-cam/session/heartbeat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, sessionId: currentSessionId }),
+          body: JSON.stringify({ userId: myUid, sessionId: currentSessionId }),
         });
         const data = await res.json();
-        // If session status is not CONNECTED or session was not found on server
         if (!data.session || data.session.status !== 'CONNECTED') {
           triggerAutoSkipToNext(data.session?.endReason || 'Lawan bicara telah keluar.');
         }
-      } catch {
-        // Ignore
-      }
+      } catch {}
     }, 2000);
   };
 
@@ -1341,19 +1481,20 @@ export default function StrangerCamApp() {
       return;
     }
 
+    const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     setMessages((prev) => [...prev, { sender: 'me', text }]);
     setInputText('');
     setChatWarning(null);
 
-    // 1. Instant Direct P2P via WebRTC DataChannel
+    // 1. Instant Direct P2P via WebRTC DataChannel (if ready)
     if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
       try {
-        dataChannelRef.current.send(JSON.stringify({ type: 'CHAT_MSG', text }));
+        dataChannelRef.current.send(JSON.stringify({ type: 'CHAT_MSG', text, id: msgId }));
       } catch {}
     }
 
-    // 2. Real-time signaling channel delivery
-    sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'CHAT_MSG', text }));
+    // 2. Real-time signaling channel delivery (guaranteed delivery across networks)
+    sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'CHAT_MSG', text, id: msgId }));
   };
 
   const formatDuration = (seconds: number) => {
@@ -1363,7 +1504,7 @@ export default function StrangerCamApp() {
   };
 
   return (
-    <div className="w-full bg-[#16121D] text-white rounded-3xl p-4 sm:p-8 border border-white/10 shadow-2xl relative overflow-hidden">
+    <div className="w-full bg-[#16121D] text-white rounded-3xl p-3 sm:p-8 pb-24 sm:pb-8 border border-white/10 shadow-2xl relative overflow-hidden">
       {/* ── STAGE 1: AGE GATE & INSTANT START (NO REGISTRATION REQUIRED) ─ */}
       {step === 'AGE_GATE' && (
         <div className="max-w-md mx-auto py-8 text-center space-y-6">
@@ -1691,16 +1832,47 @@ export default function StrangerCamApp() {
           {/* Video Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Remote Video */}
-            <div className="relative aspect-[4/3] bg-black/60 rounded-2xl overflow-hidden border border-white/15 shadow-xl flex items-center justify-center">
+            <div className="relative aspect-[4/3] max-h-[32vh] sm:max-h-[460px] w-full bg-black/60 rounded-2xl overflow-hidden border border-white/15 shadow-xl flex items-center justify-center">
               <video
                 ref={setRemoteVideoRef}
                 autoPlay
                 playsInline
                 className={`w-full h-full object-cover ${remoteCameraOff ? 'hidden' : ''}`}
               />
-              <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md text-[11px] font-semibold text-white">
-                Lawan Bicara
+              <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+              <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md text-[11px] font-semibold text-white flex items-center gap-1.5 z-10">
+                <span>Lawan Bicara</span>
+                {p2pConnected ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-bold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Live P2P</span>
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-amber-300 font-medium animate-pulse">Menghubungkan...</span>
+                )}
               </div>
+
+              {audioMutedByBrowser && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (remoteVideoRef.current) {
+                      remoteVideoRef.current.muted = false;
+                      remoteVideoRef.current.play().catch(() => {});
+                    }
+                    if (remoteAudioRef.current) {
+                      remoteAudioRef.current.muted = false;
+                      remoteAudioRef.current.play().catch(() => {});
+                    }
+                    setAudioMutedByBrowser(false);
+                  }}
+                  className="absolute bottom-3 left-3 z-20 px-3 py-1.5 rounded-full bg-amber-400 hover:bg-amber-300 text-black text-[11px] font-bold shadow-lg flex items-center gap-1.5 transition-all animate-bounce"
+                >
+                  <Volume2 className="w-3.5 h-3.5" />
+                  <span>Tap untuk Aktifkan Suara</span>
+                </button>
+              )}
+
               {remoteCameraOff && (
                 <div className="absolute inset-0 bg-gray-950 flex flex-col items-center justify-center text-gray-400 p-4 text-center">
                   <VideoOff className="w-10 h-10 mb-2 opacity-50" />
@@ -1711,7 +1883,7 @@ export default function StrangerCamApp() {
             </div>
 
             {/* Local Video with Face Visibility Warning & Countdown Overlays */}
-            <div className="relative aspect-[4/3] bg-black/60 rounded-2xl overflow-hidden border border-white/15 shadow-xl flex items-center justify-center">
+            <div className="relative aspect-[4/3] max-h-[32vh] sm:max-h-[460px] w-full bg-black/60 rounded-2xl overflow-hidden border border-white/15 shadow-xl flex items-center justify-center">
               <video
                 ref={setLocalVideoRef}
                 autoPlay
@@ -1719,13 +1891,13 @@ export default function StrangerCamApp() {
                 muted
                 className="w-full h-full object-cover mirror"
               />
-              <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md text-[11px] font-semibold text-white">
+              <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md text-[11px] font-semibold text-white z-10">
                 Kamu ({alias})
               </div>
 
               {/* Countdown & Warning Overlay (Requirements 9 & 11) */}
               {cameraSafetyState === 'CAMERA_ON_FACE_MISSING' && faceWarningCountdown !== null && (
-                <div className="absolute inset-x-3 bottom-3 p-3 rounded-xl bg-rose-950/90 backdrop-blur-md border border-rose-500/50 text-white space-y-1 text-center animate-fadeIn">
+                <div className="absolute inset-x-3 bottom-3 p-3 rounded-xl bg-rose-950/90 backdrop-blur-md border border-rose-500/50 text-white space-y-1 text-center animate-fadeIn z-20">
                   <div className="text-xs font-bold text-rose-300 flex items-center justify-center gap-1.5">
                     <AlertTriangle className="w-4 h-4 text-amber-400 animate-bounce" />
                     <span>{faceWarningMessage}</span>
@@ -1742,7 +1914,7 @@ export default function StrangerCamApp() {
 
               {/* Camera Auto Disabled Overlay (Requirement 10) */}
               {cameraSafetyState === 'CAMERA_AUTO_DISABLED' && (
-                <div className="absolute inset-0 bg-gray-950/95 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 space-y-3">
+                <div className="absolute inset-0 bg-gray-950/95 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 space-y-3 z-20">
                   <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center border border-rose-500/30">
                     <EyeOff className="w-6 h-6" />
                   </div>
@@ -1766,7 +1938,7 @@ export default function StrangerCamApp() {
 
               {/* Manual Camera Off Overlay */}
               {cameraSafetyState === 'CAMERA_OFF' && (
-                <div className="absolute inset-0 bg-gray-950/90 flex flex-col items-center justify-center text-gray-400 p-4 text-center">
+                <div className="absolute inset-0 bg-gray-950/90 flex flex-col items-center justify-center text-gray-400 p-4 text-center z-20">
                   <VideoOff className="w-8 h-8 mb-2 opacity-50" />
                   <span className="text-xs font-semibold text-gray-300">Kamera Dinonaktifkan Manual</span>
                   <button
@@ -1780,8 +1952,8 @@ export default function StrangerCamApp() {
             </div>
           </div>
 
-          {/* Safety Control Bar */}
-          <div className="p-4 rounded-2xl bg-black/50 backdrop-blur-xl border border-white/15 flex flex-wrap items-center justify-between gap-3">
+          {/* Safety Control Bar (Sticky & Mobile-Safe) */}
+          <div className="p-3 sm:p-4 rounded-2xl bg-black/60 backdrop-blur-xl border border-white/15 flex flex-wrap items-center justify-between gap-2.5 sticky bottom-1 z-20 shadow-2xl">
             <div className="flex items-center gap-2">
               <button
                 onClick={toggleMute}
