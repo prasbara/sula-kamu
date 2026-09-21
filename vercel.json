@@ -1,5 +1,6 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "cleanUrls": true,
-  "regions": ["sin1"]
+  "buildCommand": "next build",
+  "cleanUrls": true
 }
