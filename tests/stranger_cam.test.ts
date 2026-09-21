@@ -312,6 +312,37 @@ async function runStrangerCamTestSuite() {
   const updatedReportRow = db.prepare('SELECT status FROM stranger_reports WHERE id = ?').get(reportToResolve.id) as any;
   assert(updatedReportRow.status === 'RESOLVED', 'Report status successfully marked as RESOLVED');
 
+  // -------------------------------------------------------------
+  // 10. FACE VISIBILITY SAFETY GATE & ZERO FRAME RETENTION
+  // -------------------------------------------------------------
+  console.log('\n10. Face Visibility Safety Gate & Minimal Event Logging:');
+  const faceDisabledEvent = StrangerCamService.logSafetyEvent({
+    sessionId: liveSessionId,
+    userId: userLiveA,
+    eventType: 'FACE_VISIBILITY_CAMERA_DISABLED',
+    reason: 'Wajah tidak terdeteksi dalam frame kamera selama 3 detik',
+  });
+  assert(faceDisabledEvent.success === true && faceDisabledEvent.eventId !== undefined, 'Logs FACE_VISIBILITY_CAMERA_DISABLED safety event');
+
+  // Verify Requirement 23: Single face visibility camera disable does NOT ban the user
+  const userLiveARow = db.prepare('SELECT status FROM users WHERE id = ?').get(userLiveA) as any;
+  assert(userLiveARow.status === 'ACTIVE', 'FACE_VISIBILITY_CAMERA_DISABLED does NOT ban user account');
+
+  // Log multiple faces event
+  const multiFaceEvent = StrangerCamService.logSafetyEvent({
+    sessionId: liveSessionId,
+    userId: userLiveB,
+    eventType: 'MULTIPLE_FACE_CAMERA_DISABLED',
+    reason: 'Terdeteksi lebih dari satu orang di kamera',
+  });
+  assert(multiFaceEvent.success === true, 'Logs MULTIPLE_FACE_CAMERA_DISABLED safety event');
+
+  // Verify event is present in Admin Safety Events
+  const allEvents = StrangerCamService.getAdminSafetyEvents();
+  const foundFaceEvt = allEvents.find((e) => e.eventType === 'FACE_VISIBILITY_CAMERA_DISABLED');
+  assert(foundFaceEvt !== undefined, 'Admin Safety Events accurately displays FACE_VISIBILITY_CAMERA_DISABLED');
+  assert(!('image' in (foundFaceEvt?.payload || {})) && !('frame' in (foundFaceEvt?.payload || {})), 'Zero Recording: Event payload contains strictly NO raw images or camera frames');
+
   console.log('\n===============================================================');
   console.log(`TEST SUMMARY: ${passed}/${passed + failed} TESTS PASSED (${Math.round((passed / (passed + failed)) * 100)}%)`);
   console.log('===============================================================');

@@ -56,4 +56,6 @@ export const config = {
   TELEGRAM_BOT_URL: process.env.NEXT_PUBLIC_TELEGRAM_BOT_URL || 'https://t.me/nivasocialmakingbot',
   APP_URL: process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://niva.id',
   STRANGER_CAM_ENABLED: process.env.STRANGER_CAM_ENABLED !== 'false',
+  STRANGER_CAM_FACE_GRACE_SECONDS: parseInt(process.env.STRANGER_CAM_FACE_GRACE_SECONDS || '3', 10),
+  STRANGER_CAM_FACE_CONFIDENCE: parseFloat(process.env.STRANGER_CAM_FACE_CONFIDENCE || '0.70'),
 };

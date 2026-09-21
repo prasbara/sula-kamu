@@ -67,7 +67,7 @@ export default function StrangerCamComingSoon() {
         <div className="max-w-3xl mx-auto text-center space-y-4">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#5B3A6D]/10 border border-[#5B3A6D]/20 text-[#5B3A6D] text-xs font-bold uppercase tracking-wider">
             <Sparkles className="w-3.5 h-3.5 text-[#8A5A9A]" />
-            <span>Coming Soon — NIVA Stranger Cam</span>
+            <span>Fitur Resmi • NIVA Stranger Cam</span>
           </div>
 
           <h2 className="text-3xl sm:text-5xl font-display font-black text-[#17151A] tracking-tight">
@@ -115,9 +115,9 @@ export default function StrangerCamComingSoon() {
 
           <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-6">
             <div className="space-y-3 text-center sm:text-left">
-              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-white/10 text-white/90 text-[11px] font-bold tracking-wider uppercase border border-white/10">
-                <Radio className="w-3 h-3 text-[#E8B4C8] animate-pulse" />
-                <span>UPCOMING FEATURE</span>
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-bold tracking-wider uppercase border border-emerald-500/30">
+                <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
+                <span>LIVE FEATURE • BUKA SEKARANG</span>
               </div>
               <h3 className="text-2xl font-display font-bold text-white">NIVA STRANGER CAM</h3>
               <p className="text-xs text-white/70 max-w-sm leading-relaxed">
@@ -129,37 +129,20 @@ export default function StrangerCamComingSoon() {
             </div>
 
             <div className="w-full sm:w-auto flex flex-col items-center gap-3">
-              {process.env.NEXT_PUBLIC_STRANGER_CAM_ENABLED === 'true' ? (
-                <>
-                  <Link
-                    href="/stranger-cam"
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-[#8A5A9A] via-[#C47293] to-[#E8B4C8] hover:opacity-95 text-[#17151A] font-extrabold text-sm shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 active:translate-y-0"
-                  >
-                    <Video className="w-4 h-4 text-[#17151A]" />
-                    <span>🎥 Try Stranger Cam →</span>
-                  </Link>
-                  <button
-                    onClick={() => setShowNotifyModal(true)}
-                    className="text-xs text-white/70 hover:text-white underline underline-offset-4 flex items-center gap-1.5 transition-colors"
-                  >
-                    <Bell className="w-3.5 h-3.5" />
-                    <span>Notify Me Updates</span>
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => setShowNotifyModal(true)}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-[#8A5A9A] to-[#C47293] hover:from-[#784A86] hover:to-[#B36183] text-white font-bold text-sm shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5 active:translate-y-0"
-                  >
-                    <Bell className="w-4 h-4" />
-                    <span>Notify Me</span>
-                  </button>
-                  <span className="text-[11px] text-white/50">
-                    Be notified when Stranger Cam launches.
-                  </span>
-                </>
-              )}
+              <Link
+                href="/stranger-cam"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl bg-gradient-to-r from-[#8A5A9A] via-[#C47293] to-[#E8B4C8] hover:opacity-95 text-[#17151A] font-extrabold text-sm shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-0.5 active:translate-y-0"
+              >
+                <Video className="w-4 h-4 text-[#17151A]" />
+                <span>🎥 Masuk ke Stranger Cam Sekarang →</span>
+              </Link>
+              <button
+                onClick={() => setShowNotifyModal(true)}
+                className="text-xs text-white/70 hover:text-white underline underline-offset-4 flex items-center gap-1.5 transition-colors"
+              >
+                <Bell className="w-3.5 h-3.5" />
+                <span>Notify Me</span>
+              </button>
             </div>
           </div>
         </div>

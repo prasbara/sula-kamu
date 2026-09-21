@@ -989,4 +989,37 @@ export class StrangerCamService {
 
     return { success: true, message: `Laporan status diubah menjadi ${action}.` };
   }
+
+  /**
+   * Log operational safety event (e.g. FACE_VISIBILITY_CAMERA_DISABLED, MULTIPLE_FACE_CAMERA_DISABLED).
+   * Strictly metadata only — NO raw camera frames, NO face embeddings, NO facial recognition data.
+   */
+  public static logSafetyEvent(opts: {
+    sessionId?: string;
+    userId: string;
+    eventType: 'FACE_VISIBILITY_CAMERA_DISABLED' | 'MULTIPLE_FACE_CAMERA_DISABLED' | string;
+    reason?: string;
+    riskScore?: number;
+  }): { success: boolean; eventId: string } {
+    const db = getDatabase();
+    const eventId = uuidv4();
+    const riskScore = opts.riskScore ?? (opts.eventType.includes('MULTIPLE') ? 0.4 : 0.2);
+
+    db.prepare(`
+      INSERT INTO stranger_safety_events (id, session_id, user_id, event_type, risk_score, payload, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(
+      eventId,
+      opts.sessionId || null,
+      opts.userId,
+      opts.eventType,
+      riskScore,
+      JSON.stringify({
+        reason: opts.reason || 'Automated client safety gate trigger',
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    return { success: true, eventId };
+  }
 }

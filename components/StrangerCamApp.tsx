@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Video,
   VideoOff,
@@ -22,9 +22,23 @@ import {
   MessageSquare,
   AlertOctagon,
   X,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
+import {
+  detectFacePresence,
+  FacePresenceResult,
+} from '@/lib/facePresenceDetector';
 
 type Step = 'AGE_GATE' | 'LOCATION_CHECK' | 'DEVICE_SETUP' | 'QUEUED' | 'CALL' | 'ERROR';
+
+export type CameraSafetyState =
+  | 'CAMERA_OFF'
+  | 'CAMERA_REQUESTING'
+  | 'CAMERA_ON_FACE_PRESENT'
+  | 'CAMERA_ON_FACE_MISSING'
+  | 'CAMERA_AUTO_DISABLED'
+  | 'CAMERA_REENABLE_PENDING';
 
 interface PeerInfo {
   id: string;
@@ -54,6 +68,8 @@ const ICE_SERVERS: RTCConfiguration = {
   ],
 };
 
+const DEFAULT_GRACE_SECONDS = 3;
+
 export default function StrangerCamApp() {
   // Navigation & session state
   const [step, setStep] = useState<Step>('AGE_GATE');
@@ -70,7 +86,14 @@ export default function StrangerCamApp() {
   const [peer, setPeer] = useState<PeerInfo | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const [remoteCameraOff, setRemoteCameraOff] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
+
+  // Face Visibility Safety Gate state machine
+  const [cameraSafetyState, setCameraSafetyState] = useState<CameraSafetyState>('CAMERA_REQUESTING');
+  const [faceWarningCountdown, setFaceWarningCountdown] = useState<number | null>(null);
+  const [faceWarningMessage, setFaceWarningMessage] = useState<string>('');
+  const [setupFaceStatus, setSetupFaceStatus] = useState<'IDLE' | 'CHECKING' | 'FACE_DETECTED' | 'NO_FACE' | 'MULTIPLE_FACES'>('IDLE');
 
   // In-call text messages
   const [messages, setMessages] = useState<Array<{ sender: 'me' | 'stranger' | 'system'; text: string }>>([]);
@@ -93,6 +116,12 @@ export default function StrangerCamApp() {
   const durationTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSignalTimeRef = useRef<string | undefined>(undefined);
   const isInitiatorRef = useRef<boolean>(false);
+
+  // Face detection loop references
+  const faceDetectionTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const missingTicksRef = useRef<number>(0);
+  const multipleTicksRef = useRef<number>(0);
+  const graceSecondsRef = useRef<number>(DEFAULT_GRACE_SECONDS);
 
   // 1. Initialize user from localStorage / cookies
   useEffect(() => {
@@ -134,6 +163,7 @@ export default function StrangerCamApp() {
     if (signalingPollingRef.current) clearInterval(signalingPollingRef.current);
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+    if (faceDetectionTimerRef.current) clearInterval(faceDetectionTimerRef.current);
   }
 
   function stopAllMedia() {
@@ -226,8 +256,7 @@ export default function StrangerCamApp() {
             setLoading(false);
           }
         },
-        async (geoErr) => {
-          // Fallback to user self-confirmation if GPS permission is denied or unavailable
+        async () => {
           setLocationStatus('GPS tidak tersedia atau ditolak. Mengalihkan ke konfirmasi pernyataan mandiri...');
           try {
             const res = await fetch('/api/stranger-cam/location-confirm', {
@@ -251,7 +280,6 @@ export default function StrangerCamApp() {
         { timeout: 10000, enableHighAccuracy: false }
       );
     } else {
-      // Direct user confirmation
       try {
         const res = await fetch('/api/stranger-cam/location-confirm', {
           method: 'POST',
@@ -273,10 +301,11 @@ export default function StrangerCamApp() {
     }
   };
 
-  // ── Step 3: Camera & Microphone Setup ─────────────────────────────────────
+  // ── Step 3: Camera & Face Presence Setup (Requirement 15 & 29) ─────────────
   const handleSetupMedia = async () => {
     setLoading(true);
     setErrorMessage('');
+    setSetupFaceStatus('CHECKING');
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -289,12 +318,29 @@ export default function StrangerCamApp() {
         localVideoRef.current.srcObject = stream;
       }
 
-      // Automatically proceed to queue
-      enterQueue();
+      setCameraSafetyState('CAMERA_ON_FACE_PRESENT');
+
+      // Run initial face presence check on preview after video element starts playing
+      setTimeout(async () => {
+        if (!localVideoRef.current) return;
+        try {
+          const result = await detectFacePresence(localVideoRef.current);
+          if (result.status === 'FACE_PRESENT') {
+            setSetupFaceStatus('FACE_DETECTED');
+          } else if (result.status === 'MULTIPLE_FACES') {
+            setSetupFaceStatus('MULTIPLE_FACES');
+          } else {
+            setSetupFaceStatus('NO_FACE');
+          }
+        } catch {
+          setSetupFaceStatus('FACE_DETECTED');
+        }
+      }, 700);
     } catch (err: any) {
       setErrorMessage(
         'Izin kamera atau mikrofon ditolak. Untuk menggunakan Stranger Cam, izinkan akses kamera & mikrofon di browser Anda.'
       );
+      setSetupFaceStatus('IDLE');
     } finally {
       setLoading(false);
     }
@@ -321,20 +367,16 @@ export default function StrangerCamApp() {
       if (!res.ok) throw new Error(data.message || 'Gagal masuk antrean.');
 
       if (data.status === 'CONNECTED' && data.session) {
-        // Immediate match!
         initiateCall(data.session);
       } else {
-        // Polling queue
         queuePollingRef.current = setInterval(async () => {
           try {
-            // Heartbeat
             await fetch('/api/stranger-cam/session/heartbeat', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ userId }),
             });
 
-            // Re-join check
             const pollRes = await fetch('/api/stranger-cam/queue', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -370,27 +412,33 @@ export default function StrangerCamApp() {
     setStep('DEVICE_SETUP');
   };
 
-  // ── Step 5: WebRTC P2P Call Session ───────────────────────────────────────
+  // ── Step 5: WebRTC Call & Real-Time Face Safety Loop ───────────────────────
   const initiateCall = async (session: any) => {
     clearAllTimers();
     setSessionId(session.id);
     setStep('CALL');
     setCallDuration(0);
+    setRemoteCameraOff(false);
+    setIsCameraOff(false);
+    setCameraSafetyState('CAMERA_ON_FACE_PRESENT');
+    setFaceWarningCountdown(null);
+    setFaceWarningMessage('');
+    missingTicksRef.current = 0;
+    multipleTicksRef.current = 0;
+
     setMessages([
       { sender: 'system', text: '🔒 Terhubung secara 1-on-1 dengan mahasiswa Semarang. Zero Recording aktif.' },
+      { sender: 'system', text: '👤 Face Safety Gate aktif: Pastikan wajah Anda selalu terlihat di depan kamera.' },
       { sender: 'system', text: '⚠️ Jangan pernah membagikan password, kode OTP, atau transfer uang ke orang asing.' },
     ]);
 
-    // Timer
     durationTimerRef.current = setInterval(() => {
       setCallDuration((prev) => prev + 1);
     }, 1000);
 
-    // Identify roles: user_a initiates WebRTC offer, user_b waits for offer and answers
     const isInitiator = session.user_a_id === userId;
     isInitiatorRef.current = isInitiator;
 
-    // Fetch peer public information
     try {
       const infoRes = await fetch(`/api/stranger-cam/session/info?sessionId=${session.id}&userId=${userId}`);
       const infoData = await infoRes.json();
@@ -398,7 +446,6 @@ export default function StrangerCamApp() {
         setPeer(infoData.peer);
       }
     } catch {
-      // Peer info fallback
       setPeer({
         id: isInitiator ? session.user_b_id : session.user_a_id,
         displayName: 'Mahasiswa Semarang',
@@ -409,6 +456,218 @@ export default function StrangerCamApp() {
     }
 
     setupWebRTCConnection(session.id);
+
+    // Start Real-Time Face Presence Detection Loop (runs every 600ms on-device)
+    startFaceSafetyMonitor(session.id);
+  };
+
+  // ── Face Visibility Safety Monitor (Requirements 1, 4, 5, 7, 8, 9) ─────────
+  const startFaceSafetyMonitor = (currentSessionId: string) => {
+    if (faceDetectionTimerRef.current) clearInterval(faceDetectionTimerRef.current);
+
+    faceDetectionTimerRef.current = setInterval(async () => {
+      // Test 5: If camera is intentionally turned OFF by user, do not enforce face presence
+      if (!localVideoRef.current || isCameraOff || cameraSafetyState === 'CAMERA_OFF' || cameraSafetyState === 'CAMERA_AUTO_DISABLED') {
+        return;
+      }
+
+      try {
+        const result: FacePresenceResult = await detectFacePresence(localVideoRef.current);
+
+        if (result.status === 'FACE_PRESENT') {
+          // Face is visible -> continue normally (Test 1 & 3: warning cancelled)
+          if (missingTicksRef.current > 0 || multipleTicksRef.current > 0) {
+            missingTicksRef.current = 0;
+            multipleTicksRef.current = 0;
+            setFaceWarningCountdown(null);
+            setFaceWarningMessage('');
+            setCameraSafetyState('CAMERA_ON_FACE_PRESENT');
+          }
+        } else if (result.status === 'FACE_MISSING') {
+          // Face not detected -> start/continue countdown (Test 2 & 4)
+          multipleTicksRef.current = 0;
+          missingTicksRef.current += 1;
+          setCameraSafetyState('CAMERA_ON_FACE_MISSING');
+
+          // Each tick is ~600ms. 5 ticks = 3.0 seconds
+          const elapsedSecs = Math.floor(missingTicksRef.current * 0.6);
+          const countdown = Math.max(0, graceSecondsRef.current - elapsedSecs);
+          setFaceWarningCountdown(countdown);
+
+          if (result.isLowLight) {
+            setFaceWarningMessage('Wajah sulit terdeteksi. Coba arahkan wajah ke kamera atau pindah ke tempat yang lebih terang.');
+          } else {
+            setFaceWarningMessage('⚠️ Wajah tidak terlihat di kamera. Kamera akan dimatikan jika wajah tidak kembali terlihat.');
+          }
+
+          // Test 4: Grace period expired (> 3 seconds) -> automatically disable camera
+          if (countdown <= 0) {
+            triggerCameraAutoDisable(
+              currentSessionId,
+              'FACE_VISIBILITY_CAMERA_DISABLED',
+              'Wajah tidak terlihat di kamera selama melebihi batas toleransi 3 detik'
+            );
+          }
+        } else if (result.status === 'MULTIPLE_FACES') {
+          // Multiple faces detected (Test 7)
+          missingTicksRef.current = 0;
+          multipleTicksRef.current += 1;
+          setCameraSafetyState('CAMERA_ON_FACE_MISSING');
+
+          const elapsedSecs = Math.floor(multipleTicksRef.current * 0.6);
+          const countdown = Math.max(0, graceSecondsRef.current - elapsedSecs);
+          setFaceWarningCountdown(countdown);
+          setFaceWarningMessage('⚠️ Hanya satu orang yang boleh terlihat di kamera. Kamera akan dimatikan jika kondisi ini berlanjut.');
+
+          if (countdown <= 0) {
+            triggerCameraAutoDisable(
+              currentSessionId,
+              'MULTIPLE_FACE_CAMERA_DISABLED',
+              'Terdeteksi lebih dari satu orang di kamera selama melebihi 3 detik'
+            );
+          }
+        }
+      } catch {
+        // Fallback: keep call running
+      }
+    }, 600);
+  };
+
+  // Disable outgoing video track and log minimal safety metadata (Requirement 8, 13, 20)
+  const triggerCameraAutoDisable = (currentSessionId: string, eventType: string, reason: string) => {
+    // 1. Disable local video track immediately (remote sees black / camera off, not frozen frame)
+    if (localStreamRef.current) {
+      localStreamRef.current.getVideoTracks().forEach((track) => {
+        track.enabled = false;
+      });
+    }
+
+    setIsCameraOff(true);
+    setCameraSafetyState('CAMERA_AUTO_DISABLED');
+    setFaceWarningCountdown(null);
+    setFaceWarningMessage('');
+    missingTicksRef.current = 0;
+    multipleTicksRef.current = 0;
+
+    // 2. Notify remote participant via WebRTC signal that camera was disabled
+    if (currentSessionId && userId) {
+      fetch('/api/stranger-cam/session/signal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSessionId,
+          senderId: userId,
+          signalType: 'CANDIDATE',
+          payload: JSON.stringify({ type: 'CAMERA_STATE', enabled: false }),
+        }),
+      }).catch(() => {});
+
+      // 3. Log minimal safety event (zero images stored)
+      fetch('/api/stranger-cam/session/safety-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSessionId,
+          userId,
+          eventType,
+          reason,
+        }),
+      }).catch(() => {});
+    }
+  };
+
+  // Re-enable camera with mandatory face presence check (Requirement 10 & Acceptance Test 6)
+  const handleReenableCamera = async () => {
+    if (!localStreamRef.current || !localVideoRef.current) return;
+    setCameraSafetyState('CAMERA_REENABLE_PENDING');
+
+    // Turn video track on momentarily to analyze frame
+    localStreamRef.current.getVideoTracks().forEach((track) => {
+      track.enabled = true;
+    });
+
+    setTimeout(async () => {
+      if (!localVideoRef.current) return;
+      const check = await detectFacePresence(localVideoRef.current);
+
+      if (check.status === 'FACE_PRESENT') {
+        setIsCameraOff(false);
+        setCameraSafetyState('CAMERA_ON_FACE_PRESENT');
+        missingTicksRef.current = 0;
+        multipleTicksRef.current = 0;
+        setFaceWarningCountdown(null);
+        setFaceWarningMessage('');
+
+        // Notify peer
+        if (sessionId && userId) {
+          fetch('/api/stranger-cam/session/signal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sessionId,
+              senderId: userId,
+              signalType: 'CANDIDATE',
+              payload: JSON.stringify({ type: 'CAMERA_STATE', enabled: true }),
+            }),
+          }).catch(() => {});
+        }
+      } else {
+        // Face still absent or multiple faces -> shut off immediately
+        localStreamRef.current?.getVideoTracks().forEach((track) => {
+          track.enabled = false;
+        });
+        setCameraSafetyState('CAMERA_AUTO_DISABLED');
+        alert(
+          check.status === 'MULTIPLE_FACES'
+            ? 'Hanya satu orang yang boleh terlihat di kamera.'
+            : 'Wajah belum terdeteksi. Arahkan wajah Anda ke depan kamera sebelum mengaktifkan kembali.'
+        );
+      }
+    }, 350);
+  };
+
+  // Manual camera toggle by user (Test 5)
+  const toggleCamera = () => {
+    if (isCameraOff) {
+      // User wants to turn camera ON -> run face presence gate
+      handleReenableCamera();
+    } else {
+      // User intentionally turns camera OFF -> no face safety enforcement
+      if (localStreamRef.current) {
+        localStreamRef.current.getVideoTracks().forEach((track) => {
+          track.enabled = false;
+        });
+      }
+      setIsCameraOff(true);
+      setCameraSafetyState('CAMERA_OFF');
+      setFaceWarningCountdown(null);
+      setFaceWarningMessage('');
+      missingTicksRef.current = 0;
+      multipleTicksRef.current = 0;
+
+      if (sessionId && userId) {
+        fetch('/api/stranger-cam/session/signal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            senderId: userId,
+            signalType: 'CANDIDATE',
+            payload: JSON.stringify({ type: 'CAMERA_STATE', enabled: false }),
+          }),
+        }).catch(() => {});
+      }
+    }
+  };
+
+  // Toggle Mute Audio
+  const toggleMute = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = isMuted;
+      });
+      setIsMuted(!isMuted);
+    }
   };
 
   const setupWebRTCConnection = async (currentSessionId: string) => {
@@ -416,21 +675,18 @@ export default function StrangerCamApp() {
       const pc = new RTCPeerConnection(ICE_SERVERS);
       peerConnectionRef.current = pc;
 
-      // Add local stream tracks to WebRTC
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => {
           pc.addTrack(track, localStreamRef.current!);
         });
       }
 
-      // Handle incoming remote stream tracks
       pc.ontrack = (event) => {
         if (remoteVideoRef.current && event.streams[0]) {
           remoteVideoRef.current.srcObject = event.streams[0];
         }
       };
 
-      // Handle ICE candidates
       pc.onicecandidate = (event) => {
         if (event.candidate) {
           fetch('/api/stranger-cam/session/signal', {
@@ -446,7 +702,6 @@ export default function StrangerCamApp() {
         }
       };
 
-      // If initiator, create Offer
       if (isInitiatorRef.current) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -463,9 +718,8 @@ export default function StrangerCamApp() {
         });
       }
 
-      // Start signaling poll & presence heartbeat
       startSignalingAndHeartbeat(currentSessionId, pc);
-    } catch (err: any) {
+    } catch {
       setErrorMessage('Gagal membentuk koneksi WebRTC P2P.');
     }
   };
@@ -473,7 +727,6 @@ export default function StrangerCamApp() {
   const startSignalingAndHeartbeat = (currentSessionId: string, pc: RTCPeerConnection) => {
     signalingPollingRef.current = setInterval(async () => {
       try {
-        // Poll signals
         const res = await fetch(
           `/api/stranger-cam/session/signal?sessionId=${currentSessionId}&receiverId=${userId}${
             lastSignalTimeRef.current ? `&after=${encodeURIComponent(lastSignalTimeRef.current)}` : ''
@@ -485,6 +738,11 @@ export default function StrangerCamApp() {
           for (const signal of data.signals) {
             lastSignalTimeRef.current = signal.createdAt;
             const parsed = JSON.parse(signal.payload);
+
+            if (parsed.type === 'CAMERA_STATE') {
+              setRemoteCameraOff(!parsed.enabled);
+              continue;
+            }
 
             if (signal.signalType === 'OFFER' && !isInitiatorRef.current) {
               await pc.setRemoteDescription(new RTCSessionDescription(parsed));
@@ -509,7 +767,7 @@ export default function StrangerCamApp() {
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(parsed));
               } catch {
-                // Ignore candidate buffering mismatch
+                // Ignore candidate buffering
               }
             }
           }
@@ -519,7 +777,6 @@ export default function StrangerCamApp() {
       }
     }, 1500);
 
-    // Heartbeat every 4 seconds
     heartbeatRef.current = setInterval(async () => {
       try {
         const res = await fetch('/api/stranger-cam/session/heartbeat', {
@@ -529,7 +786,6 @@ export default function StrangerCamApp() {
         });
         const data = await res.json();
         if (data.session && data.session.status !== 'CONNECTED') {
-          // Partner ended or skipped
           handleCallEndedByPartner(data.session.endReason || 'Sesi telah diakhiri.');
         }
       } catch {
@@ -546,7 +802,7 @@ export default function StrangerCamApp() {
     }
     setMessages((prev) => [...prev, { sender: 'system', text: `Percakapan diakhiri: ${reason}` }]);
     setTimeout(() => {
-      enterQueue(); // Auto-queue next partner
+      enterQueue();
     }, 2000);
   };
 
@@ -558,11 +814,7 @@ export default function StrangerCamApp() {
       await fetch('/api/stranger-cam/session/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'SKIP',
-          sessionId,
-          userId,
-        }),
+        body: JSON.stringify({ action: 'SKIP', sessionId, userId }),
       });
     } catch {
       // Proceed
@@ -577,11 +829,7 @@ export default function StrangerCamApp() {
       await fetch('/api/stranger-cam/session/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'END',
-          sessionId,
-          userId,
-        }),
+        body: JSON.stringify({ action: 'END', sessionId, userId }),
       });
     } catch {
       // Proceed
@@ -601,12 +849,7 @@ export default function StrangerCamApp() {
       await fetch('/api/stranger-cam/session/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'BLOCK',
-          sessionId,
-          userId,
-          targetUserId: peer.id,
-        }),
+        body: JSON.stringify({ action: 'BLOCK', sessionId, userId, targetUserId: peer.id }),
       });
       alert('Pengguna telah diblokir secara permanen.');
     } catch {
@@ -642,33 +885,11 @@ export default function StrangerCamApp() {
     }
   };
 
-  // Toggle Mute Audio
-  const toggleMute = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((track) => {
-        track.enabled = isMuted;
-      });
-      setIsMuted(!isMuted);
-    }
-  };
-
-  // Toggle Camera
-  const toggleCamera = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getVideoTracks().forEach((track) => {
-        track.enabled = isCameraOff;
-      });
-      setIsCameraOff(!isCameraOff);
-    }
-  };
-
-  // Text message submission with anti-scam checks
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     const text = inputText.trim();
     if (!text) return;
 
-    // Client-side quick filter
     if (/transfer\s+(uang|duit|dana)|minta\s+otp|minta\s+pin|slot\s+gacor/i.test(text)) {
       setChatWarning('⚠️ Pesan terdeteksi berisiko tinggi dan dicegah oleh sistem keamanan NIVA.');
       return;
@@ -678,7 +899,6 @@ export default function StrangerCamApp() {
     setInputText('');
     setChatWarning(null);
 
-    // Send via signal payload
     if (sessionId && peerConnectionRef.current) {
       fetch('/api/stranger-cam/session/signal', {
         method: 'POST',
@@ -686,7 +906,7 @@ export default function StrangerCamApp() {
         body: JSON.stringify({
           sessionId,
           senderId: userId,
-          signalType: 'CANDIDATE', // piggyback or simple channel
+          signalType: 'CANDIDATE',
           payload: JSON.stringify({ type: 'CHAT_MSG', text }),
         }),
       }).catch(() => {});
@@ -826,7 +1046,7 @@ export default function StrangerCamApp() {
         </div>
       )}
 
-      {/* ── STAGE 3: DEVICE & CAMERA PERMISSION ───────────────────────────── */}
+      {/* ── STAGE 3: DEVICE & FACE VISIBILITY SAFETY CHECK (Req 15 & 29) ─── */}
       {step === 'DEVICE_SETUP' && (
         <div className="max-w-lg mx-auto py-6 text-center space-y-6">
           <div className="space-y-2">
@@ -835,10 +1055,22 @@ export default function StrangerCamApp() {
               <span>Zero Recording Guaranteed</span>
             </div>
             <h3 className="text-2xl font-display font-black text-white">
-              Izinkan Kamera & Mikrofon
+              Izinkan Kamera & Cek Wajah
             </h3>
             <p className="text-xs text-gray-300 max-w-sm mx-auto">
-              NIVA tidak menyimpan rekaman panggilan. Semua aliran video murni peer-to-peer antar-browser Anda.
+              NIVA memeriksa secara lokal (on-device) apakah wajah Anda terlihat di kamera saat sesi aktif. Tidak ada rekaman yang disimpan.
+            </p>
+          </div>
+
+          {/* Privacy Notice (Requirement 15) */}
+          <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 text-xs text-gray-300 space-y-1 text-left">
+            <div className="font-semibold text-white flex items-center gap-1.5">
+              <UserCheck className="w-4 h-4 text-[#8A5A9A]" />
+              <span>Face Safety Check</span>
+            </div>
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              NIVA checks locally whether a face is visible in your camera frame while Stranger Cam is active.
+              We do not save or record camera frames for this check.
             </p>
           </div>
 
@@ -851,10 +1083,37 @@ export default function StrangerCamApp() {
               muted
               className="w-full h-full object-cover mirror"
             />
-            {!localStreamRef.current && (
+            {!localStreamRef.current ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 p-4 text-center">
                 <Video className="w-10 h-10 mb-2 opacity-50" />
                 <span className="text-xs">Klik tombol di bawah untuk menyalakan kamera preview</span>
+              </div>
+            ) : (
+              <div className="absolute bottom-3 left-3 right-3 flex items-center justify-center">
+                {setupFaceStatus === 'CHECKING' && (
+                  <span className="px-2.5 py-1 rounded-full bg-amber-500/80 backdrop-blur-md text-[10px] font-bold text-black flex items-center gap-1">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    <span>Mendeteksi Wajah On-Device...</span>
+                  </span>
+                )}
+                {setupFaceStatus === 'FACE_DETECTED' && (
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-600/90 backdrop-blur-md text-[10px] font-bold text-white flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>Wajah Terlihat ✓ (Siap Ngobrol)</span>
+                  </span>
+                )}
+                {setupFaceStatus === 'NO_FACE' && (
+                  <span className="px-2.5 py-1 rounded-full bg-rose-600/90 backdrop-blur-md text-[10px] font-bold text-white flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    <span>Wajah Belum Terlihat di Kamera</span>
+                  </span>
+                )}
+                {setupFaceStatus === 'MULTIPLE_FACES' && (
+                  <span className="px-2.5 py-1 rounded-full bg-rose-600/90 backdrop-blur-md text-[10px] font-bold text-white flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    <span>Hanya 1 Orang Diperbolehkan</span>
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -867,18 +1126,28 @@ export default function StrangerCamApp() {
           )}
 
           <div className="space-y-3 pt-2">
-            <button
-              onClick={handleSetupMedia}
-              disabled={loading}
-              className="w-full py-4 rounded-xl bg-gradient-to-r from-[#5B3A6D] via-[#8A5A9A] to-[#C47293] hover:opacity-95 text-white font-black text-sm shadow-xl transition-all transform hover:-translate-y-0.5"
-            >
-              {loading ? 'Meminta Akses Media...' : '🎥 Nyalakan Kamera & Mulai Cari Match →'}
-            </button>
+            {!localStreamRef.current ? (
+              <button
+                onClick={handleSetupMedia}
+                disabled={loading}
+                className="w-full py-4 rounded-xl bg-gradient-to-r from-[#5B3A6D] via-[#8A5A9A] to-[#C47293] hover:opacity-95 text-white font-black text-sm shadow-xl transition-all transform hover:-translate-y-0.5"
+              >
+                {loading ? 'Meminta Akses Media...' : '🎥 Nyalakan Kamera Preview & Cek Wajah →'}
+              </button>
+            ) : (
+              <button
+                onClick={enterQueue}
+                disabled={setupFaceStatus === 'NO_FACE' || setupFaceStatus === 'MULTIPLE_FACES'}
+                className="w-full py-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:opacity-95 text-white font-black text-sm shadow-xl transition-all disabled:opacity-50"
+              >
+                Masuk Antrean & Cari Match Semarang →
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {/* ── STAGE 4: QUEUE (FINDING SOMEONE IN SEMARANG) ─────────────────── */}
+      {/* ── STAGE 4: QUEUE ───────────────────────────────────────────────── */}
       {step === 'QUEUED' && (
         <div className="max-w-md mx-auto py-12 text-center space-y-6">
           <div className="relative w-20 h-20 mx-auto">
@@ -904,7 +1173,7 @@ export default function StrangerCamApp() {
             </div>
             <div className="flex items-center gap-2 text-purple-300">
               <ShieldCheck className="w-4 h-4" />
-              <span>Moderasi & Perlindungan Anti-Scam Aktif</span>
+              <span>Face Visibility & Perlindungan Anti-Scam Aktif</span>
             </div>
           </div>
 
@@ -919,7 +1188,7 @@ export default function StrangerCamApp() {
         </div>
       )}
 
-      {/* ── STAGE 5: ACTIVE 1-ON-1 WEBRTC CALL ────────────────────────────── */}
+      {/* ── STAGE 5: ACTIVE 1-ON-1 CALL WITH FACE SAFETY GATE ─────────────── */}
       {step === 'CALL' && (
         <div className="space-y-4">
           {/* Top Call Info Bar */}
@@ -941,27 +1210,40 @@ export default function StrangerCamApp() {
               </div>
             </div>
 
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-semibold">
-              <span>● Zero Recording</span>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-semibold border border-purple-500/30">
+                <UserCheck className="w-3 h-3" />
+                <span>Face Gate Active</span>
+              </span>
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-300 text-[10px] font-semibold border border-rose-500/20">
+                ● Zero Recording
+              </span>
             </div>
           </div>
 
           {/* Video Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Remote Stranger Video */}
+            {/* Remote Video */}
             <div className="relative aspect-[4/3] bg-black/60 rounded-2xl overflow-hidden border border-white/15 shadow-xl flex items-center justify-center">
               <video
                 ref={remoteVideoRef}
                 autoPlay
                 playsInline
-                className="w-full h-full object-cover"
+                className={`w-full h-full object-cover ${remoteCameraOff ? 'hidden' : ''}`}
               />
               <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md text-[11px] font-semibold text-white">
                 Lawan Bicara
               </div>
+              {remoteCameraOff && (
+                <div className="absolute inset-0 bg-gray-950 flex flex-col items-center justify-center text-gray-400 p-4 text-center">
+                  <VideoOff className="w-10 h-10 mb-2 opacity-50" />
+                  <span className="text-xs font-semibold text-gray-300">Kamera Lawan Bicara Sedang Mati</span>
+                  <span className="text-[10px] text-gray-500 mt-1">Audio tetap tersambung</span>
+                </div>
+              )}
             </div>
 
-            {/* Local User Video */}
+            {/* Local Video with Face Visibility Warning & Countdown Overlays */}
             <div className="relative aspect-[4/3] bg-black/60 rounded-2xl overflow-hidden border border-white/15 shadow-xl flex items-center justify-center">
               <video
                 ref={localVideoRef}
@@ -973,16 +1255,65 @@ export default function StrangerCamApp() {
               <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md text-[11px] font-semibold text-white">
                 Kamu ({alias})
               </div>
-              {isCameraOff && (
-                <div className="absolute inset-0 bg-gray-900/90 flex flex-col items-center justify-center text-gray-400">
-                  <VideoOff className="w-8 h-8 mb-2" />
-                  <span className="text-xs">Kamera Dimatikan</span>
+
+              {/* Countdown & Warning Overlay (Requirements 9 & 11) */}
+              {cameraSafetyState === 'CAMERA_ON_FACE_MISSING' && faceWarningCountdown !== null && (
+                <div className="absolute inset-x-3 bottom-3 p-3 rounded-xl bg-rose-950/90 backdrop-blur-md border border-rose-500/50 text-white space-y-1 text-center animate-fadeIn">
+                  <div className="text-xs font-bold text-rose-300 flex items-center justify-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 animate-bounce" />
+                    <span>{faceWarningMessage}</span>
+                  </div>
+                  <div className="text-sm font-extrabold text-white">
+                    Kamera mati dalam:{' '}
+                    <span className="text-amber-300 text-base">{faceWarningCountdown}</span> detik
+                  </div>
+                  <div className="text-[10px] text-gray-300">
+                    Arahkan kembali wajah Anda ke kamera untuk membatalkan penonaktifan.
+                  </div>
+                </div>
+              )}
+
+              {/* Camera Auto Disabled Overlay (Requirement 10) */}
+              {cameraSafetyState === 'CAMERA_AUTO_DISABLED' && (
+                <div className="absolute inset-0 bg-gray-950/95 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center border border-rose-500/30">
+                    <EyeOff className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-sm font-bold text-white">
+                      Kamera dimatikan karena wajah tidak terlihat
+                    </div>
+                    <p className="text-xs text-gray-400 max-w-xs">
+                      Audio tetap aktif. Posisikan wajah Anda di depan kamera sebelum mengaktifkan kembali.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleReenableCamera}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:opacity-95 text-white font-bold text-xs shadow-lg flex items-center gap-2 transition-all"
+                  >
+                    <Video className="w-4 h-4" />
+                    <span>📷 Aktifkan Kamera Kembali</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Manual Camera Off Overlay */}
+              {cameraSafetyState === 'CAMERA_OFF' && (
+                <div className="absolute inset-0 bg-gray-950/90 flex flex-col items-center justify-center text-gray-400 p-4 text-center">
+                  <VideoOff className="w-8 h-8 mb-2 opacity-50" />
+                  <span className="text-xs font-semibold text-gray-300">Kamera Dinonaktifkan Manual</span>
+                  <button
+                    onClick={handleReenableCamera}
+                    className="mt-3 px-4 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs text-white border border-white/15"
+                  >
+                    Nyalakan Kamera
+                  </button>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Safety Control Bar (Requirement 8: Mute, Camera, Skip, Report, Block, End always visible) */}
+          {/* Safety Control Bar */}
           <div className="p-4 rounded-2xl bg-black/50 backdrop-blur-xl border border-white/15 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <button
@@ -1013,7 +1344,6 @@ export default function StrangerCamApp() {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Skip */}
               <button
                 onClick={handleSkip}
                 className="px-4 py-3 rounded-xl bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] hover:opacity-90 text-white text-xs font-bold flex items-center gap-1.5 shadow-md transition-all"
@@ -1023,7 +1353,6 @@ export default function StrangerCamApp() {
                 <span>Skip</span>
               </button>
 
-              {/* Report */}
               <button
                 onClick={() => setShowReportModal(true)}
                 className="px-3.5 py-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-300 text-xs font-semibold flex items-center gap-1.5 transition-all"
@@ -1033,7 +1362,6 @@ export default function StrangerCamApp() {
                 <span className="hidden sm:inline">Laporkan</span>
               </button>
 
-              {/* Block */}
               <button
                 onClick={handleBlock}
                 className="px-3.5 py-3 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center gap-1.5 transition-all"
@@ -1043,7 +1371,6 @@ export default function StrangerCamApp() {
                 <span className="hidden sm:inline">Blokir</span>
               </button>
 
-              {/* End */}
               <button
                 onClick={handleEnd}
                 className="px-4 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md transition-all"
@@ -1055,7 +1382,7 @@ export default function StrangerCamApp() {
             </div>
           </div>
 
-          {/* In-Call Text Chat with Anti-Scam Warning */}
+          {/* In-Call Text Chat with Anti-Scam Filter */}
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-3">
             <div className="flex items-center gap-2 text-xs font-semibold text-gray-300">
               <MessageSquare className="w-4 h-4 text-[#8A5A9A]" />
