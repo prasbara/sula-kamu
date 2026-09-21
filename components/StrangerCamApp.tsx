@@ -109,6 +109,7 @@ export default function StrangerCamApp() {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const queuePollingRef = useRef<NodeJS.Timeout | null>(null);
   const signalingPollingRef = useRef<NodeJS.Timeout | null>(null);
@@ -122,6 +123,42 @@ export default function StrangerCamApp() {
   const missingTicksRef = useRef<number>(0);
   const multipleTicksRef = useRef<number>(0);
   const graceSecondsRef = useRef<number>(DEFAULT_GRACE_SECONDS);
+
+  // Persistent video stream attachment across step changes (DEVICE_SETUP, CALL)
+  useEffect(() => {
+    if (step === 'CALL') {
+      const attachMedia = () => {
+        if (localVideoRef.current && localStreamRef.current) {
+          if (localVideoRef.current.srcObject !== localStreamRef.current) {
+            localVideoRef.current.srcObject = localStreamRef.current;
+          }
+          localVideoRef.current.play().catch(() => {});
+        }
+        if (remoteVideoRef.current && remoteStreamRef.current) {
+          if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+            remoteVideoRef.current.srcObject = remoteStreamRef.current;
+          }
+          remoteVideoRef.current.play().catch(() => {});
+        }
+      };
+
+      attachMedia();
+      const t = setTimeout(attachMedia, 150);
+      return () => clearTimeout(t);
+    } else if (step === 'DEVICE_SETUP') {
+      const attachLocal = () => {
+        if (localVideoRef.current && localStreamRef.current) {
+          if (localVideoRef.current.srcObject !== localStreamRef.current) {
+            localVideoRef.current.srcObject = localStreamRef.current;
+          }
+          localVideoRef.current.play().catch(() => {});
+        }
+      };
+      attachLocal();
+      const t = setTimeout(attachLocal, 150);
+      return () => clearTimeout(t);
+    }
+  }, [step]);
 
   // 1. Initialize user from localStorage / cookies
   useEffect(() => {
@@ -175,6 +212,7 @@ export default function StrangerCamApp() {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
+    remoteStreamRef.current = null;
   }
 
   // ── Step 1: 18+ Age Gate ───────────────────────────────────────────────────
@@ -380,7 +418,7 @@ export default function StrangerCamApp() {
             const pollRes = await fetch('/api/stranger-cam/queue', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'JOIN', userId }),
+              body: JSON.stringify({ action: 'POLL', userId }),
             });
             const pollData = await pollRes.json();
             if (pollData.status === 'CONNECTED' && pollData.session) {
@@ -390,7 +428,7 @@ export default function StrangerCamApp() {
           } catch {
             // Heartbeat retry
           }
-        }, 3000);
+        }, 1500);
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Gagal bergabung ke antrean.');
@@ -410,6 +448,10 @@ export default function StrangerCamApp() {
       // Ignore
     }
     setStep('DEVICE_SETUP');
+    if (localVideoRef.current && localStreamRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+      localVideoRef.current.play().catch(() => {});
+    }
   };
 
   // ── Step 5: WebRTC Call & Real-Time Face Safety Loop ───────────────────────
@@ -427,9 +469,9 @@ export default function StrangerCamApp() {
     multipleTicksRef.current = 0;
 
     setMessages([
-      { sender: 'system', text: '🔒 Terhubung secara 1-on-1 dengan mahasiswa Semarang. Zero Recording aktif.' },
-      { sender: 'system', text: '👤 Face Safety Gate aktif: Pastikan wajah Anda selalu terlihat di depan kamera.' },
-      { sender: 'system', text: '⚠️ Jangan pernah membagikan password, kode OTP, atau transfer uang ke orang asing.' },
+      { sender: 'system', text: 'Terhubung secara 1-on-1 dengan mahasiswa Semarang. Zero Recording aktif.' },
+      { sender: 'system', text: 'Face Safety Gate aktif: Pastikan wajah Anda selalu terlihat di depan kamera.' },
+      { sender: 'system', text: 'Jangan pernah membagikan password, kode OTP, atau transfer uang ke orang asing.' },
     ]);
 
     durationTimerRef.current = setInterval(() => {
@@ -465,9 +507,22 @@ export default function StrangerCamApp() {
   const startFaceSafetyMonitor = (currentSessionId: string) => {
     if (faceDetectionTimerRef.current) clearInterval(faceDetectionTimerRef.current);
 
+    // Initial warm-up allowance so WebRTC connection & video pipeline can stabilize
+    let warmupTicksRemaining = 8;
+
     faceDetectionTimerRef.current = setInterval(async () => {
-      // Test 5: If camera is intentionally turned OFF by user, do not enforce face presence
+      // If camera is intentionally turned OFF by user, do not enforce face presence
       if (!localVideoRef.current || isCameraOff || cameraSafetyState === 'CAMERA_OFF' || cameraSafetyState === 'CAMERA_AUTO_DISABLED') {
+        return;
+      }
+
+      // Wait until video has actually decoded frames before enforcing face check
+      if (localVideoRef.current.readyState < 2 || localVideoRef.current.videoWidth === 0) {
+        return;
+      }
+
+      if (warmupTicksRemaining > 0) {
+        warmupTicksRemaining -= 1;
         return;
       }
 
@@ -497,7 +552,7 @@ export default function StrangerCamApp() {
           if (result.isLowLight) {
             setFaceWarningMessage('Wajah sulit terdeteksi. Coba arahkan wajah ke kamera atau pindah ke tempat yang lebih terang.');
           } else {
-            setFaceWarningMessage('⚠️ Wajah tidak terlihat di kamera. Kamera akan dimatikan jika wajah tidak kembali terlihat.');
+            setFaceWarningMessage('Wajah tidak terlihat di kamera. Kamera akan dimatikan jika wajah tidak kembali terlihat.');
           }
 
           // Test 4: Grace period expired (> 3 seconds) -> automatically disable camera
@@ -517,7 +572,7 @@ export default function StrangerCamApp() {
           const elapsedSecs = Math.floor(multipleTicksRef.current * 0.6);
           const countdown = Math.max(0, graceSecondsRef.current - elapsedSecs);
           setFaceWarningCountdown(countdown);
-          setFaceWarningMessage('⚠️ Hanya satu orang yang boleh terlihat di kamera. Kamera akan dimatikan jika kondisi ini berlanjut.');
+          setFaceWarningMessage('Hanya satu orang yang boleh terlihat di kamera. Kamera akan dimatikan jika kondisi ini berlanjut.');
 
           if (countdown <= 0) {
             triggerCameraAutoDisable(
@@ -586,6 +641,13 @@ export default function StrangerCamApp() {
       track.enabled = true;
     });
 
+    if (localVideoRef.current) {
+      if (localVideoRef.current.srcObject !== localStreamRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+      }
+      localVideoRef.current.play().catch(() => {});
+    }
+
     setTimeout(async () => {
       if (!localVideoRef.current) return;
       const check = await detectFacePresence(localVideoRef.current);
@@ -623,7 +685,7 @@ export default function StrangerCamApp() {
             : 'Wajah belum terdeteksi. Arahkan wajah Anda ke depan kamera sebelum mengaktifkan kembali.'
         );
       }
-    }, 350);
+    }, 450);
   };
 
   // Manual camera toggle by user (Test 5)
@@ -682,8 +744,13 @@ export default function StrangerCamApp() {
       }
 
       pc.ontrack = (event) => {
-        if (remoteVideoRef.current && event.streams[0]) {
-          remoteVideoRef.current.srcObject = event.streams[0];
+        const stream = event.streams[0] || new MediaStream([event.track]);
+        remoteStreamRef.current = stream;
+        if (remoteVideoRef.current) {
+          if (remoteVideoRef.current.srcObject !== stream) {
+            remoteVideoRef.current.srcObject = stream;
+          }
+          remoteVideoRef.current.play().catch(() => {});
         }
       };
 
@@ -775,7 +842,7 @@ export default function StrangerCamApp() {
       } catch {
         // Retry polling
       }
-    }, 1500);
+    }, 1000);
 
     heartbeatRef.current = setInterval(async () => {
       try {
@@ -1292,7 +1359,7 @@ export default function StrangerCamApp() {
                     className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:opacity-95 text-white font-bold text-xs shadow-lg flex items-center gap-2 transition-all"
                   >
                     <Video className="w-4 h-4" />
-                    <span>📷 Aktifkan Kamera Kembali</span>
+                    <span>Aktifkan Kamera Kembali</span>
                   </button>
                 </div>
               )}

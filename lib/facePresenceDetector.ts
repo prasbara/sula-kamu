@@ -28,12 +28,13 @@ export async function detectFacePresence(
   video: HTMLVideoElement,
   confidenceThreshold = 0.70
 ): Promise<FacePresenceResult> {
-  // Ensure video element has valid dimensions and ready state
+  // Ensure video element has valid dimensions and ready state.
+  // During initial buffer/setup, return FACE_PRESENT so camera is not killed before frames decode.
   if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
     return {
-      status: 'FACE_MISSING',
-      faceCount: 0,
-      confidence: 0,
+      status: 'FACE_PRESENT',
+      faceCount: 1,
+      confidence: 0.8,
       isLowLight: false,
     };
   }

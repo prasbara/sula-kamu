@@ -354,6 +354,11 @@ export class StrangerCamService {
   public static leaveQueue(userId: string): void {
     const db = getDatabase();
     db.prepare('DELETE FROM stranger_queue WHERE user_id = ?').run(userId);
+    db.prepare(`
+      UPDATE stranger_sessions
+      SET status = 'CANCELLED', ended_at = datetime('now'), end_reason = 'USER_LEFT_QUEUE'
+      WHERE (user_a_id = ? OR user_b_id = ?) AND status IN ('MATCHING', 'CONNECTED')
+    `).run(userId, userId);
   }
 
   /**
