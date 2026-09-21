@@ -1,5 +1,5 @@
 import { cookies } from 'next/headers';
-import { notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { AdminAuthService } from '@/src/services/auth/adminAuthService';
@@ -13,12 +13,12 @@ export default async function AdminLayout({
   const token = cookieStore.get('niva_admin_token')?.value;
 
   if (!token) {
-    notFound();
+    redirect('/login');
   }
 
   const session = AdminAuthService.validateSession(token);
   if (!session) {
-    notFound();
+    redirect('/login');
   }
 
   return (

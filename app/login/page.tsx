@@ -34,7 +34,7 @@ export default function AdminLoginPage() {
         throw new Error(data.error || 'Autentikasi gagal.');
       }
 
-      router.push('/app-admin/overview');
+      window.location.href = '/app-admin/overview';
     } catch (err: any) {
       setErrorMsg(err.message || 'Kredensial tidak valid.');
     } finally {

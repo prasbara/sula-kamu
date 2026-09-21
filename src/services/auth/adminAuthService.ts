@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../database/db';
 import { ModerationService } from '../safety/moderationService';
 import { AdminRole, AdminUser } from '../../types/index';
+import { config } from '../../config/index';
 
 export interface AdminSessionRecord {
   sessionId: string;
@@ -99,6 +100,41 @@ export class AdminAuthService {
   }
 
   /**
+   * Cryptographically sign token for serverless stateless persistence
+   */
+  public static signToken(payload: any): string {
+    const secret = config.APP_SECRET || 'sula_admin_default_secret_key_2026';
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+    const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const data = `${header}.${body}`;
+    const signature = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+    return `${data}.${signature}`;
+  }
+
+  /**
+   * Verify cryptographically signed token
+   */
+  public static verifyToken(token: string): any | null {
+    if (!token || typeof token !== 'string') return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [header, body, signature] = parts;
+    const secret = config.APP_SECRET || 'sula_admin_default_secret_key_2026';
+    const expectedSig = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
+
+    try {
+      if (signature.length !== expectedSig.length) return null;
+      if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) return null;
+
+      const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+      if (!payload.exp || Math.floor(Date.now() / 1000) >= payload.exp) return null;
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Authenticate admin credentials with brute force lockout, MFA, and audit trail
    */
   public static async login(
@@ -177,15 +213,29 @@ export class AdminAuthService {
     // 5. Success: record success and create session
     this.recordAttempt(username, ipAddress, true);
 
-    const rawToken = crypto.randomBytes(32).toString('hex');
-    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const sessionId = uuidv4();
-    const expiresAt = new Date(Date.now() + this.ABSOLUTE_SESSION_HOURS * 60 * 60 * 1000).toISOString();
+    const expiresTimestamp = Math.floor(Date.now() / 1000) + this.ABSOLUTE_SESSION_HOURS * 3600;
+    const expiresAt = new Date(expiresTimestamp * 1000).toISOString();
 
-    db.prepare(`
-      INSERT INTO admin_sessions (id, admin_id, token_hash, ip_address, user_agent, last_active_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, datetime('now'), ?)
-    `).run(sessionId, admin.id, tokenHash, ipAddress, userAgent, expiresAt);
+    const payload = {
+      sessionId,
+      adminId: admin.id,
+      username: admin.username,
+      displayName: admin.display_name,
+      role: admin.role,
+      exp: expiresTimestamp,
+      nonce: crypto.randomBytes(16).toString('hex'),
+    };
+
+    const rawToken = this.signToken(payload);
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+    try {
+      db.prepare(`
+        INSERT INTO admin_sessions (id, admin_id, token_hash, ip_address, user_agent, last_active_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'), ?)
+      `).run(sessionId, admin.id, tokenHash, ipAddress, userAgent, expiresAt);
+    } catch {}
 
     ModerationService.logAudit({
       actorId: admin.id,
@@ -219,52 +269,93 @@ export class AdminAuthService {
     const db = getDatabase();
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
 
-    const session = db.prepare(`
-      SELECT 
-        s.id as sessionId,
-        s.admin_id as adminId,
-        s.last_active_at,
-        s.expires_at,
-        s.is_revoked,
-        u.username,
-        u.display_name as displayName,
-        u.role,
-        u.is_active
-      FROM admin_sessions s
-      JOIN admin_users u ON u.id = s.admin_id
-      WHERE s.token_hash = ? AND s.is_revoked = 0 AND u.is_active = 1
-    `).get(tokenHash) as any;
+    // 1. Check local SQLite admin_sessions table if session exists
+    try {
+      const session = db.prepare(`
+        SELECT 
+          s.id as sessionId,
+          s.admin_id as adminId,
+          s.last_active_at,
+          s.expires_at,
+          s.is_revoked,
+          u.username,
+          u.display_name as displayName,
+          u.role,
+          u.is_active
+        FROM admin_sessions s
+        JOIN admin_users u ON u.id = s.admin_id
+        WHERE s.token_hash = ?
+      `).get(tokenHash) as any;
 
-    if (!session) return null;
+      if (session) {
+        if (session.is_revoked === 1 || session.is_active === 0) return null;
 
-    const now = Date.now();
-    const expiresStr = session.expires_at.includes('T')
-      ? (session.expires_at.endsWith('Z') ? session.expires_at : session.expires_at + 'Z')
-      : session.expires_at.replace(' ', 'T') + 'Z';
-    const absoluteExpiry = new Date(expiresStr).getTime();
-    if (now > absoluteExpiry) return null;
+        const now = Date.now();
+        const expiresStr = session.expires_at.includes('T')
+          ? (session.expires_at.endsWith('Z') ? session.expires_at : session.expires_at + 'Z')
+          : session.expires_at.replace(' ', 'T') + 'Z';
+        const absoluteExpiry = new Date(expiresStr).getTime();
+        if (now > absoluteExpiry) return null;
 
-    // Check idle timeout (30 minutes) - parse UTC cleanly
-    const lastActiveStr = session.last_active_at.includes('T')
-      ? (session.last_active_at.endsWith('Z') ? session.last_active_at : session.last_active_at + 'Z')
-      : session.last_active_at.replace(' ', 'T') + 'Z';
-    const lastActive = new Date(lastActiveStr).getTime();
-    if (now - lastActive > this.IDLE_TIMEOUT_MINUTES * 60 * 1000) {
-      // Session idle expired
-      db.prepare("UPDATE admin_sessions SET is_revoked = 1 WHERE id = ?").run(session.sessionId);
-      return null;
-    }
+        // Check idle timeout (30 minutes) - parse UTC cleanly
+        const lastActiveStr = session.last_active_at.includes('T')
+          ? (session.last_active_at.endsWith('Z') ? session.last_active_at : session.last_active_at + 'Z')
+          : session.last_active_at.replace(' ', 'T') + 'Z';
+        const lastActive = new Date(lastActiveStr).getTime();
+        if (now - lastActive > this.IDLE_TIMEOUT_MINUTES * 60 * 1000) {
+          try {
+            db.prepare("UPDATE admin_sessions SET is_revoked = 1 WHERE id = ?").run(session.sessionId);
+          } catch {}
+          return null;
+        }
 
-    // Refresh last_active_at with ISO string
-    db.prepare("UPDATE admin_sessions SET last_active_at = ? WHERE id = ?").run(new Date().toISOString(), session.sessionId);
+        try {
+          db.prepare("UPDATE admin_sessions SET last_active_at = ? WHERE id = ?").run(new Date().toISOString(), session.sessionId);
+        } catch {}
+
+        return {
+          sessionId: session.sessionId,
+          adminId: session.adminId,
+          username: session.username,
+          displayName: session.displayName,
+          role: session.role as AdminRole,
+          expiresAt: session.expires_at,
+        };
+      }
+    } catch {}
+
+    // 2. If not found in local SQLite session table (common across serverless stateless lambdas),
+    // verify the tamper-proof cryptographic signature of the token.
+    const tokenPayload = this.verifyToken(rawToken);
+    if (!tokenPayload) return null;
+
+    // Check if token was explicitly revoked in this DB instance
+    try {
+      const revoked = db.prepare("SELECT is_revoked FROM admin_sessions WHERE token_hash = ?").get(tokenHash) as any;
+      if (revoked && revoked.is_revoked === 1) return null;
+    } catch {}
+
+    // Check if user is active in DB
+    try {
+      const user = db.prepare("SELECT * FROM admin_users WHERE id = ? OR username = ?").get(tokenPayload.adminId, tokenPayload.username) as any;
+      if (user && user.is_active === 0) return null;
+    } catch {}
+
+    // Cache session in local DB instance for subsequent queries
+    try {
+      db.prepare(`
+        INSERT OR IGNORE INTO admin_sessions (id, admin_id, token_hash, ip_address, user_agent, last_active_at, expires_at)
+        VALUES (?, ?, ?, '127.0.0.1', 'Serverless', datetime('now'), ?)
+      `).run(tokenPayload.sessionId, tokenPayload.adminId, tokenHash, new Date(tokenPayload.exp * 1000).toISOString());
+    } catch {}
 
     return {
-      sessionId: session.sessionId,
-      adminId: session.adminId,
-      username: session.username,
-      displayName: session.displayName,
-      role: session.role as AdminRole,
-      expiresAt: session.expires_at,
+      sessionId: tokenPayload.sessionId,
+      adminId: tokenPayload.adminId,
+      username: tokenPayload.username,
+      displayName: tokenPayload.displayName,
+      role: tokenPayload.role as AdminRole,
+      expiresAt: new Date(tokenPayload.exp * 1000).toISOString(),
     };
   }
 
@@ -277,7 +368,17 @@ export class AdminAuthService {
 
     const db = getDatabase();
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    db.prepare("UPDATE admin_sessions SET is_revoked = 1 WHERE token_hash = ?").run(tokenHash);
+    try {
+      const existing = db.prepare("SELECT id FROM admin_sessions WHERE token_hash = ?").get(tokenHash);
+      if (existing) {
+        db.prepare("UPDATE admin_sessions SET is_revoked = 1 WHERE token_hash = ?").run(tokenHash);
+      } else {
+        db.prepare(`
+          INSERT INTO admin_sessions (id, admin_id, token_hash, ip_address, user_agent, is_revoked, last_active_at, expires_at)
+          VALUES (?, ?, ?, ?, ?, 1, datetime('now'), datetime('now', '+12 hours'))
+        `).run(session.sessionId, session.adminId, tokenHash, ipAddress, 'Logout');
+      }
+    } catch {}
 
     ModerationService.logAudit({
       actorId: session.adminId,
