@@ -15,7 +15,8 @@
     "test:security": "tsx tests/security.test.ts",
     "test:safechat": "tsx tests/safe_chat_session.test.ts",
     "test:strangercam": "tsx tests/stranger_cam.test.ts",
-    "test:all": "tsx tests/security.test.ts && tsx tests/safe_chat_session.test.ts && tsx tests/stranger_cam.test.ts && tsx tests/production_audit.test.ts && tsx tests/admin_dashboard.test.ts"
+    "test:hardening": "tsx tests/stranger_cam_hardening.test.ts",
+    "test:all": "tsx tests/security.test.ts && tsx tests/safe_chat_session.test.ts && tsx tests/stranger_cam.test.ts && tsx tests/stranger_cam_hardening.test.ts && tsx tests/production_audit.test.ts && tsx tests/admin_dashboard.test.ts"
   },
   "dependencies": {
     "@grammyjs/conversations": "^2.1.1",

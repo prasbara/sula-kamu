@@ -180,8 +180,13 @@ async function runStrangerCamTestSuite() {
   const sessionAfterSkip = db.prepare('SELECT status, end_reason FROM stranger_sessions WHERE id = ?').get(sessionId) as any;
   assert(sessionAfterSkip.status === 'SKIPPED', 'Session status is SKIPPED');
 
-  // Match A with C for Block test
+  // Verify Skip Cooldown: User A and User B cannot immediately rematch
   StrangerCamService.joinQueue(userA);
+  const rematchB = StrangerCamService.joinQueue(userB);
+  assert(rematchB.status === 'QUEUED', 'User B remains queued due to skip cooldown with User A');
+  StrangerCamService.leaveQueue(userB);
+
+  // Match A with C for Block test
   const matchAC = StrangerCamService.joinQueue(userC);
   const sessionACId = matchAC.session.id;
 
@@ -198,7 +203,8 @@ async function runStrangerCamTestSuite() {
   StrangerCamService.leaveQueue(userA);
   StrangerCamService.leaveQueue(userC);
 
-  // Report Test
+  // Report Test (clear skips cooldown to allow pairing A & B for moderation testing)
+  db.prepare('DELETE FROM stranger_skips').run();
   StrangerCamService.joinQueue(userA);
   const matchAB2 = StrangerCamService.joinQueue(userB);
   const sessionAB2Id = matchAB2.session.id;

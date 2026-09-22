@@ -67,6 +67,37 @@ const SUSPICIOUS_TEXT_PATTERNS = [
   { pattern: /(https?:\/\/[^\s]+|bit\.ly\/[^\s]+|tinyurl\.com\/[^\s]+)/i, flag: 'EXTERNAL_URL', score: 0.6 },
 ];
 
+// ─── Realtime Signal Bus for Server-Sent Events (SSE) ───────────────────────
+type SignalListener = (signal: any) => void;
+const signalListeners = new Map<string, Set<SignalListener>>();
+
+export class SignalBus {
+  public static subscribe(sessionId: string, receiverId: string, listener: SignalListener): () => void {
+    const key = `${sessionId}:${receiverId}`;
+    if (!signalListeners.has(key)) {
+      signalListeners.set(key, new Set());
+    }
+    signalListeners.get(key)!.add(listener);
+    return () => {
+      const set = signalListeners.get(key);
+      if (set) {
+        set.delete(listener);
+        if (set.size === 0) signalListeners.delete(key);
+      }
+    };
+  }
+
+  public static emit(sessionId: string, receiverId: string, signal: any): void {
+    const key = `${sessionId}:${receiverId}`;
+    const set = signalListeners.get(key);
+    if (set) {
+      set.forEach((listener) => {
+        try { listener(signal); } catch {}
+      });
+    }
+  }
+}
+
 // ─── StrangerCamService ───────────────────────────────────────────────────────
 
 export class StrangerCamService {
@@ -287,12 +318,12 @@ export class StrangerCamService {
   }
 
   /**
-   * Enter the live Semarang matching queue.
+   * Enter the live Semarang matching queue with concurrency-safe atomic pairing.
    */
   public static joinQueue(
     userId: string,
     interests: string[] = []
-  ): { success: boolean; status: string; message: string; session?: any } {
+  ): { success: boolean; status: string; message: string; session?: any; isInitiator?: boolean } {
     // Check if feature is launched
     if (!this.isFeatureLaunched()) {
       return {
@@ -320,79 +351,109 @@ export class StrangerCamService {
       }
     }
 
-    // Enforce 1 active session per user
-    const existingSession = this.getActiveSessionForUser(userId);
-    if (existingSession) {
-      return {
-        success: false,
-        status: 'ALREADY_IN_SESSION',
-        message: 'Anda sudah berada dalam sesi aktif Stranger Cam.',
-        session: existingSession,
-      };
-    }
-
     const db = getDatabase();
 
-    // Check if a suitable match is waiting in the queue
-    const match = this.findMatchInQueue(userId);
-    if (match) {
-      // Remove partner from queue
-      db.prepare('DELETE FROM stranger_queue WHERE user_id = ?').run(match.user_id);
-      db.prepare('DELETE FROM stranger_queue WHERE user_id = ?').run(userId);
+    // Begin atomic write transaction to ensure concurrent matchmaking safety
+    db.exec('BEGIN IMMEDIATE;');
+    try {
+      // 1. Housekeeping: remove stale queue entries (> 45s since entered or dead heartbeats)
+      try {
+        db.prepare(`
+          DELETE FROM stranger_queue
+          WHERE entered_at < datetime('now', '-45 seconds')
+            AND user_id NOT IN (
+              SELECT user_id FROM stranger_presence WHERE last_heartbeat >= datetime('now', '-30 seconds')
+            )
+        `).run();
+      } catch {}
 
-      // Create new session
-      const sessionId = uuidv4();
+      // 2. Enforce 1 active session per user
+      const existingSession = db.prepare(`
+        SELECT * FROM stranger_sessions
+        WHERE (user_a_id = ? OR user_b_id = ?)
+          AND status IN ('MATCHING', 'CONNECTED')
+        LIMIT 1
+      `).get(userId, userId) as any;
+
+      if (existingSession) {
+        db.exec('COMMIT;');
+        return {
+          success: false,
+          status: 'ALREADY_IN_SESSION',
+          message: 'Anda sudah berada dalam sesi aktif Stranger Cam.',
+          session: existingSession,
+        };
+      }
+
+      // 3. Look for a candidate in the queue
+      const match = this.findMatchInQueue(userId);
+      if (match) {
+        // Atomic pairing: remove both from queue
+        db.prepare('DELETE FROM stranger_queue WHERE user_id = ?').run(match.user_id);
+        db.prepare('DELETE FROM stranger_queue WHERE user_id = ?').run(userId);
+
+        // Create new session
+        const sessionId = uuidv4();
+        db.prepare(`
+          INSERT INTO stranger_sessions (id, user_a_id, user_b_id, status, started_at, updated_at)
+          VALUES (?, ?, ?, 'CONNECTED', datetime('now'), datetime('now'))
+        `).run(sessionId, userId, match.user_id);
+
+        const session = db.prepare('SELECT * FROM stranger_sessions WHERE id = ?').get(sessionId);
+        db.exec('COMMIT;');
+
+        return {
+          success: true,
+          status: 'CONNECTED',
+          message: 'Match ditemukan! Menghubungkan video 1-on-1...',
+          session,
+          isInitiator: true,
+        };
+      }
+
+      // 4. No candidate found -> place user in queue
+      const interestsJson = JSON.stringify(interests || []);
       db.prepare(`
-        INSERT INTO stranger_sessions (id, user_a_id, user_b_id, status)
-        VALUES (?, ?, ?, 'CONNECTED')
-      `).run(sessionId, userId, match.user_id);
+        INSERT INTO stranger_queue (user_id, status, interests, entered_at, updated_at)
+        VALUES (?, 'QUEUED', ?, datetime('now'), datetime('now'))
+        ON CONFLICT(user_id) DO UPDATE SET
+          status = 'QUEUED',
+          interests = excluded.interests,
+          entered_at = datetime('now'),
+          updated_at = datetime('now')
+      `).run(userId, interestsJson);
 
-      const session = db.prepare('SELECT * FROM stranger_sessions WHERE id = ?').get(sessionId);
-
+      db.exec('COMMIT;');
       return {
         success: true,
-        status: 'CONNECTED',
-        message: 'Match ditemukan! Menghubungkan video 1-on-1...',
-        session,
+        status: 'QUEUED',
+        message: 'Mencari pengguna lain di Semarang yang sedang online...',
       };
+    } catch (err) {
+      try { db.exec('ROLLBACK;'); } catch {}
+      throw err;
     }
-
-    // Otherwise place user in queue
-    const interestsJson = JSON.stringify(interests || []);
-    db.prepare(`
-      INSERT INTO stranger_queue (user_id, status, interests, entered_at)
-      VALUES (?, 'QUEUED', ?, datetime('now'))
-      ON CONFLICT(user_id) DO UPDATE SET
-        status = 'QUEUED',
-        interests = ?,
-        entered_at = datetime('now')
-    `).run(userId, interestsJson, interestsJson);
-
-    return {
-      success: true,
-      status: 'QUEUED',
-      message: 'Mencari pengguna lain di Semarang yang sedang online...',
-    };
   }
 
   /**
-   * Leave queue.
+   * Leave queue safely.
    */
   public static leaveQueue(userId: string): void {
     const db = getDatabase();
     db.prepare('DELETE FROM stranger_queue WHERE user_id = ?').run(userId);
     db.prepare(`
       UPDATE stranger_sessions
-      SET status = 'CANCELLED', ended_at = datetime('now'), end_reason = 'USER_LEFT_QUEUE'
+      SET status = 'CANCELLED', ended_at = datetime('now'), end_reason = 'USER_LEFT_QUEUE', updated_at = datetime('now')
       WHERE (user_a_id = ? OR user_b_id = ?) AND status IN ('MATCHING', 'CONNECTED')
     `).run(userId, userId);
   }
 
   /**
    * Find another waiting user who:
-   *  - is not the caller
+   *  - is not the caller (no self-match)
    *  - has no active blocks (mutual block check)
-   *  - is not in an active call
+   *  - has not been skipped by or skipped the caller in the last 60 seconds (skip cooldown)
+   *  - is not currently in an active call
    */
   private static findMatchInQueue(userId: string): { user_id: string } | null {
     const db = getDatabase();
@@ -409,6 +470,13 @@ export class StrangerCamService {
         AND NOT EXISTS (
           SELECT 1 FROM stranger_blocks sb WHERE sb.user_id = sq.user_id AND sb.blocked_user_id = ?
         )
+        -- Skip cooldown: neither has skipped the other within last 60 seconds
+        AND NOT EXISTS (
+          SELECT 1 FROM stranger_skips sk
+          WHERE ((sk.user_id = ? AND sk.skipped_user_id = sq.user_id)
+             OR (sk.user_id = sq.user_id AND sk.skipped_user_id = ?))
+            AND sk.created_at >= datetime('now', '-60 seconds')
+        )
         -- Candidate not already in an active session
         AND NOT EXISTS (
           SELECT 1 FROM stranger_sessions ss
@@ -417,7 +485,7 @@ export class StrangerCamService {
         )
       ORDER BY sq.entered_at ASC
       LIMIT 1
-    `).get(userId, userId, userId) as { user_id: string } | undefined;
+    `).get(userId, userId, userId, userId, userId) as { user_id: string } | undefined;
 
     return candidate || null;
   }
@@ -425,21 +493,73 @@ export class StrangerCamService {
   // ── Call Controls (Skip, Block, Report, End) ────────────────────────────────
 
   /**
-   * Skip current call and optionally return to queue.
+   * Skip current call with idempotency, cleanup, and rematch cooldown enforcement.
    */
   public static skipCall(
     sessionId: string,
     userId: string
   ): { success: boolean; message: string } {
     const db = getDatabase();
+
+    const session = db.prepare('SELECT * FROM stranger_sessions WHERE id = ?').get(sessionId) as any;
+    if (!session) {
+      db.prepare(`
+        INSERT INTO stranger_sessions (id, user_a_id, user_b_id, status, started_at, ended_at, end_reason, updated_at)
+        VALUES (?, ?, 'ANON_PEER', 'SKIPPED', datetime('now'), datetime('now'), ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+          status = 'SKIPPED',
+          ended_at = datetime('now'),
+          end_reason = excluded.end_reason,
+          updated_at = datetime('now')
+      `).run(sessionId, userId, `SKIPPED_BY_${userId}`);
+      return { success: true, message: 'Panggilan dilewati.' };
+    }
+
+    // Authorization: caller must be a participant in this session
+    if (session.user_a_id !== userId && session.user_b_id !== userId) {
+      return { success: false, message: 'Anda bukan peserta dalam sesi ini.' };
+    }
+
+    // Idempotent return if already terminated
+    if (session.status === 'SKIPPED' || session.status === 'ENDED' || session.status === 'BLOCKED' || session.status === 'REPORTED') {
+      return { success: true, message: 'Panggilan sudah diakhiri.' };
+    }
+
+    const partnerId = session.user_a_id === userId ? session.user_b_id : session.user_a_id;
+
+    // 1. Mark session as SKIPPED
     db.prepare(`
-      INSERT INTO stranger_sessions (id, user_a_id, user_b_id, status, started_at, ended_at, end_reason)
-      VALUES (?, ?, 'ANON_PEER', 'SKIPPED', datetime('now'), datetime('now'), ?)
-      ON CONFLICT(id) DO UPDATE SET
-        status = 'SKIPPED',
-        ended_at = datetime('now'),
-        end_reason = excluded.end_reason
-    `).run(sessionId, userId, `SKIPPED_BY_${userId}`);
+      UPDATE stranger_sessions
+      SET status = 'SKIPPED',
+          ended_at = datetime('now'),
+          end_reason = ?,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(`SKIPPED_BY_${userId}`, sessionId);
+
+    // 2. Enforce 60-second cooldown so they do not immediately rematch
+    if (partnerId && partnerId !== 'ANON_PEER') {
+      try {
+        db.prepare(`
+          INSERT OR REPLACE INTO stranger_skips (user_id, skipped_user_id, created_at)
+          VALUES (?, ?, datetime('now'))
+        `).run(userId, partnerId);
+        db.prepare(`
+          INSERT OR REPLACE INTO stranger_skips (user_id, skipped_user_id, created_at)
+          VALUES (?, ?, datetime('now'))
+        `).run(partnerId, userId);
+      } catch {}
+
+      // Notify partner via SignalBus instantly
+      SignalBus.emit(sessionId, partnerId, {
+        signalType: 'CANDIDATE',
+        payload: JSON.stringify({ type: 'PEER_LEFT', reason: 'Lawan bicara melewati percakapan.' }),
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    // 3. Remove caller from queue in case of double-join
+    db.prepare('DELETE FROM stranger_queue WHERE user_id = ?').run(userId);
 
     return { success: true, message: 'Panggilan dilewati.' };
   }
@@ -776,10 +896,22 @@ export class StrangerCamService {
     }
 
     const signalId = uuidv4();
+    const createdAt = new Date().toISOString();
     db.prepare(`
       INSERT INTO stranger_signals (id, session_id, sender_id, receiver_id, signal_type, payload, created_at)
       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     `).run(signalId, sessionId, senderId, receiverId, signalType, payload);
+
+    // Instant real-time push dispatch via SignalBus for SSE listeners
+    SignalBus.emit(sessionId, receiverId, {
+      id: signalId,
+      sessionId,
+      senderId,
+      receiverId,
+      signalType,
+      payload,
+      createdAt,
+    });
 
     return { success: true, signalId };
   }
@@ -823,8 +955,23 @@ export class StrangerCamService {
   }
 
   /**
+   * Confirms true WebRTC P2P connection established between peers.
+   */
+  public static confirmP2PConnected(sessionId: string, userId: string): { success: boolean } {
+    const db = getDatabase();
+    db.prepare(`
+      UPDATE stranger_sessions
+      SET webrtc_connected_at = COALESCE(webrtc_connected_at, datetime('now')),
+          status = 'CONNECTED',
+          updated_at = datetime('now')
+      WHERE id = ? AND (user_a_id = ? OR user_b_id = ?)
+    `).run(sessionId, userId, userId);
+    return { success: true };
+  }
+
+  /**
    * Record presence heartbeat.
-   * Auto-cleans stale queue entries if no heartbeat received within 45 seconds.
+   * Auto-cleans stale queue entries and times out dead sessions.
    */
   public static recordHeartbeat(userId: string, sessionId?: string): void {
     const db = getDatabase();
@@ -837,19 +984,41 @@ export class StrangerCamService {
         last_heartbeat = datetime('now')
     `).run(userId, sessionId || null, sessionId || null);
 
-    // Housekeeping: remove idle queue members whose last heartbeat was > 45s ago
+    // Housekeeping 1: Remove idle queue members whose last heartbeat was > 30s ago
     try {
       db.prepare(`
         DELETE FROM stranger_queue
         WHERE user_id IN (
           SELECT sq.user_id FROM stranger_queue sq
           LEFT JOIN stranger_presence sp ON sq.user_id = sp.user_id
-          WHERE sp.last_heartbeat IS NULL OR sp.last_heartbeat < datetime('now', '-45 seconds')
+          WHERE sp.last_heartbeat IS NULL OR sp.last_heartbeat < datetime('now', '-30 seconds')
         )
       `).run();
     } catch {
       // Ignore housekeeping errors
     }
+
+    // Housekeeping 2: Stale session timeout (if session has had no heartbeats from either participant for > 20s)
+    try {
+      db.prepare(`
+        UPDATE stranger_sessions
+        SET status = 'ENDED',
+            ended_at = datetime('now'),
+            end_reason = 'SESSION_TIMEOUT',
+            updated_at = datetime('now')
+        WHERE status IN ('MATCHING', 'CONNECTED')
+          AND NOT EXISTS (
+            SELECT 1 FROM stranger_presence sp
+            WHERE (sp.user_id = stranger_sessions.user_a_id OR sp.user_id = stranger_sessions.user_b_id)
+              AND datetime(sp.last_heartbeat) >= datetime('now', '-20 seconds')
+          )
+      `).run();
+    } catch {}
+
+    // Housekeeping 3: Prune old skips (> 5 minutes old)
+    try {
+      db.prepare("DELETE FROM stranger_skips WHERE created_at < datetime('now', '-5 minutes')").run();
+    } catch {}
   }
 
   /**

@@ -36,6 +36,10 @@ export async function POST(req: NextRequest) {
         const res = StrangerCamService.endCall(sessionId, userId);
         return NextResponse.json(res);
       }
+      case 'CONFIRM_P2P': {
+        const res = StrangerCamService.confirmP2PConnected(sessionId, userId);
+        return NextResponse.json(res);
+      }
       default:
         return NextResponse.json({ error: 'UNKNOWN_ACTION', message: 'Aksi tidak dikenali.' }, { status: 400 });
     }

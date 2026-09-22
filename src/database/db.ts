@@ -227,6 +227,19 @@ export function initDatabase(customPath?: string): void {
       session_id TEXT,
       last_heartbeat TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
+    `CREATE TABLE IF NOT EXISTS stranger_skips (
+      user_id TEXT NOT NULL,
+      skipped_user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, skipped_user_id)
+    )`,
+    "ALTER TABLE stranger_sessions ADD COLUMN webrtc_connected_at TEXT",
+    "ALTER TABLE stranger_sessions ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    "ALTER TABLE stranger_queue ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    "CREATE INDEX IF NOT EXISTS idx_stranger_signals_lookup ON stranger_signals(session_id, receiver_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_stranger_queue_entered ON stranger_queue(entered_at)",
+    "CREATE INDEX IF NOT EXISTS idx_stranger_sessions_active ON stranger_sessions(status, started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_stranger_skips_pair ON stranger_skips(user_id, skipped_user_id, created_at)",
   ];
 
   for (const sql of migrations) {

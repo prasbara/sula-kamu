@@ -25,13 +25,28 @@ import {
   Eye,
   EyeOff,
   Volume2,
+  UserX,
 } from 'lucide-react';
 import {
   detectFacePresence,
   FacePresenceResult,
 } from '@/lib/facePresenceDetector';
 
-type Step = 'AGE_GATE' | 'LOCATION_CHECK' | 'DEVICE_SETUP' | 'QUEUED' | 'CALL' | 'ERROR';
+type Step =
+  | 'IDLE'
+  | 'AGE_GATE'
+  | 'LOCATION_CHECK'
+  | 'DEVICE_SETUP'
+  | 'SEARCHING'
+  | 'MATCHED'
+  | 'CONNECTING'
+  | 'CONNECTED'
+  | 'SKIPPING'
+  | 'ENDED'
+  | 'PEER_DISCONNECTED'
+  | 'CONNECTION_FAILED'
+  | 'PERMISSION_DENIED'
+  | 'ERROR';
 
 export type CameraSafetyState =
   | 'CAMERA_OFF'
@@ -61,16 +76,13 @@ const REPORT_REASONS = [
   { value: 'OTHER', label: 'Other (Lainnya)' },
 ];
 
-const ICE_SERVERS: RTCConfiguration = {
+const DEFAULT_ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:global.stun.twilio.com:3478' },
-    { urls: 'stun:stun.services.mozilla.com' },
     { urls: 'stun:openrelay.metered.ca:80' },
     {
       urls: [
@@ -84,6 +96,22 @@ const ICE_SERVERS: RTCConfiguration = {
   ],
   iceCandidatePoolSize: 10,
 };
+
+async function fetchDynamicIceServers(): Promise<RTCConfiguration> {
+  try {
+    const res = await fetch('/api/stranger-cam/ice-servers');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.iceServers && data.iceServers.length > 0) {
+        return {
+          iceServers: data.iceServers,
+          iceCandidatePoolSize: data.iceCandidatePoolSize || 10,
+        };
+      }
+    }
+  } catch {}
+  return DEFAULT_ICE_SERVERS;
+}
 
 const DEFAULT_GRACE_SECONDS = 6;
 
@@ -236,7 +264,7 @@ export default function StrangerCamApp() {
 
   // Persistent video stream attachment across step changes (DEVICE_SETUP, CALL)
   useEffect(() => {
-    if (step === 'CALL') {
+    if (step === 'CONNECTED' || step === 'CONNECTING' || step === 'MATCHED') {
       const attachMedia = () => {
         if (localVideoRef.current && localStreamRef.current) {
           if (localVideoRef.current.srcObject !== localStreamRef.current) {
@@ -255,7 +283,7 @@ export default function StrangerCamApp() {
       attachMedia();
       const t = setTimeout(attachMedia, 150);
       return () => clearTimeout(t);
-    } else if (step === 'DEVICE_SETUP') {
+    } else if (step === 'DEVICE_SETUP' || step === 'SEARCHING') {
       const attachLocal = () => {
         if (localVideoRef.current && localStreamRef.current) {
           if (localVideoRef.current.srcObject !== localStreamRef.current) {
@@ -540,6 +568,7 @@ export default function StrangerCamApp() {
         'Izin kamera atau mikrofon ditolak. Untuk menggunakan Stranger Cam, izinkan akses kamera & mikrofon di browser Anda.'
       );
       setSetupFaceStatus('IDLE');
+      setStep('PERMISSION_DENIED');
     } finally {
       setLoading(false);
     }
@@ -547,7 +576,7 @@ export default function StrangerCamApp() {
 
   // ── Step 4: Enter Queue & Matchmaking ──────────────────────────────────────
   const enterQueue = async () => {
-    setStep('QUEUED');
+    setStep('SEARCHING');
     setErrorMessage('');
     clearAllTimers();
 
@@ -633,7 +662,10 @@ export default function StrangerCamApp() {
           const retryData = await retryRes.json();
           if (!retryRes.ok) throw new Error(retryData.message || 'Gagal masuk antrean.');
           if (retryData.status === 'CONNECTED' && retryData.session) {
-            initiateCall(retryData.session, retryUid);
+            setStep('MATCHED');
+            setTimeout(() => {
+              initiateCall(retryData.session, retryUid);
+            }, 400);
             return;
           }
         } else {
@@ -642,7 +674,10 @@ export default function StrangerCamApp() {
       }
 
       if (data.status === 'CONNECTED' && data.session) {
-        initiateCall(data.session, currentUid);
+        setStep('MATCHED');
+        setTimeout(() => {
+          initiateCall(data.session, currentUid);
+        }, 400);
       } else {
         queuePollingRef.current = setInterval(async () => {
           try {
@@ -659,8 +694,11 @@ export default function StrangerCamApp() {
             });
             const pollData = await pollRes.json();
             if (pollData.status === 'CONNECTED' && pollData.session) {
-              clearInterval(queuePollingRef.current!);
-              initiateCall(pollData.session, currentUid);
+              if (queuePollingRef.current) clearInterval(queuePollingRef.current);
+              setStep('MATCHED');
+              setTimeout(() => {
+                initiateCall(pollData.session, currentUid);
+              }, 400);
             }
           } catch {
             // Heartbeat retry
@@ -703,7 +741,7 @@ export default function StrangerCamApp() {
     }
     sessionIdRef.current = session.id;
     setSessionId(session.id);
-    setStep('CALL');
+    setStep('CONNECTING');
     setCallDuration(0);
     setRemoteCameraOff(false);
     setIsCameraOff(false);
@@ -905,7 +943,7 @@ export default function StrangerCamApp() {
     }
   };
 
-  // Dedicated Real-Time Multi-Channel Signaling (SSE Push + Serverless HTTP)
+  // Dedicated Real-Time Multi-Channel Signaling (Internal Authenticated Route)
   const sendSignalToPeer = (signalType: string, payloadStr: string) => {
     const currentSession = sessionIdRef.current || sessionId;
     const currentUid = userIdRef.current || userId || (typeof window !== 'undefined' ? localStorage.getItem('niva_stranger_user_id') : '') || '';
@@ -921,17 +959,6 @@ export default function StrangerCamApp() {
       createdAt: new Date().toISOString(),
     };
 
-    // 1. Instant Real-Time Push delivery via ntfy.sh SSE topic
-    if (partnerId) {
-      const targetTopic = `niva_sig_${currentSession}_${partnerId}`;
-      fetch(`https://ntfy.sh/${targetTopic}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(signalObj),
-      }).catch(() => {});
-    }
-
-    // 2. HTTP Serverless signaling route (with receiverId for auto-provisioning / test audits)
     fetch('/api/stranger-cam/session/signal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1020,28 +1047,20 @@ export default function StrangerCamApp() {
 
   // Fast Auto-Skip to Next Partner (Immediate Transition when Peer Leaves)
   const triggerAutoSkipToNext = useCallback((reason?: string) => {
-    if (isSkippingRef.current) return;
-    isSkippingRef.current = true;
-
     clearAllTimers();
     if (peerConnectionRef.current) {
-      try { peerConnectionRef.current.close(); } catch {}
+      try {
+        peerConnectionRef.current.onconnectionstatechange = null;
+        peerConnectionRef.current.oniceconnectionstatechange = null;
+        peerConnectionRef.current.ontrack = null;
+        peerConnectionRef.current.close();
+      } catch {}
       peerConnectionRef.current = null;
     }
     remoteStreamRef.current = null;
     setP2pConnected(false);
-
-    setMessages((prev) => [
-      ...prev,
-      { sender: 'system', text: reason || 'Lawan bicara telah keluar/melewati panggilan. Mencari partner baru...' },
-    ]);
-
-    // Jump straight to matchmaking queue with zero hang
-    setTimeout(() => {
-      isSkippingRef.current = false;
-      enterQueue();
-    }, 300);
-  }, [userId, alias]);
+    setStep('PEER_DISCONNECTED');
+  }, []);
 
   // Unified Incoming Signal Processor (Used by both SSE Real-Time Push & HTTP Polling)
   const processIncomingSignal = async (signal: any, pc: RTCPeerConnection) => {
@@ -1061,7 +1080,7 @@ export default function StrangerCamApp() {
 
       // 0. Peer Left Signal (Direct notification from partner)
       if (parsed.type === 'PEER_LEFT') {
-        triggerAutoSkipToNext(parsed.reason || 'Lawan bicara telah melewati panggilan. Mencari partner baru...');
+        triggerAutoSkipToNext(parsed.reason || 'Lawan bicara telah melewati panggilan.');
         return;
       }
 
@@ -1142,19 +1161,35 @@ export default function StrangerCamApp() {
 
   const setupWebRTCConnection = async (currentSessionId: string, partnerId: string, myUid: string) => {
     try {
-      const pc = new RTCPeerConnection(ICE_SERVERS);
+      const iceConfig = await fetchDynamicIceServers();
+      const pc = new RTCPeerConnection(iceConfig);
       peerConnectionRef.current = pc;
       iceCandidateBufferRef.current = [];
       processedSignalsRef.current = new Set();
 
-      // Listen for peer disconnection or drop to immediately auto-skip
+      // Listen for connectionstatechange
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
         if (s === 'connected') {
           setP2pConnected(true);
-        } else if (s === 'disconnected' || s === 'failed' || s === 'closed') {
+          setStep('CONNECTED');
+          fetch('/api/stranger-cam/session/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'CONFIRM_P2P', sessionId: currentSessionId, userId: myUid }),
+          }).catch(() => {});
+        } else if (s === 'disconnected') {
+          setTimeout(() => {
+            if (peerConnectionRef.current && peerConnectionRef.current.connectionState === 'disconnected') {
+              setP2pConnected(false);
+              setStep('PEER_DISCONNECTED');
+            }
+          }, 3500);
+        } else if (s === 'failed') {
           setP2pConnected(false);
-          triggerAutoSkipToNext('Koneksi lawan bicara terputus. Mencari lawan bicara baru...');
+          setStep('CONNECTION_FAILED');
+        } else if (s === 'closed') {
+          setP2pConnected(false);
         }
       };
 
@@ -1162,8 +1197,10 @@ export default function StrangerCamApp() {
         const s = pc.iceConnectionState;
         if (s === 'connected' || s === 'completed') {
           setP2pConnected(true);
-        } else if (s === 'disconnected' || s === 'failed') {
-          triggerAutoSkipToNext('Koneksi lawan bicara terputus. Mencari lawan bicara baru...');
+          setStep('CONNECTED');
+        } else if (s === 'failed') {
+          setP2pConnected(false);
+          setStep('CONNECTION_FAILED');
         }
       };
 
@@ -1175,7 +1212,7 @@ export default function StrangerCamApp() {
           try {
             const data = JSON.parse(event.data);
             if (data.type === 'PEER_LEFT') {
-              triggerAutoSkipToNext(data.reason || 'Lawan bicara telah melewati panggilan. Mencari partner baru...');
+              triggerAutoSkipToNext(data.reason || 'Lawan bicara telah melewati panggilan.');
               return;
             }
             if (data.type === 'CHAT_MSG' && data.text) {
@@ -1192,7 +1229,7 @@ export default function StrangerCamApp() {
           } catch {}
         };
         dc.onclose = () => {
-          triggerAutoSkipToNext('Koneksi lawan bicara terputus. Mencari partner baru...');
+          triggerAutoSkipToNext('Koneksi lawan bicara terputus.');
         };
       } catch (dcErr) {
         console.warn('DataChannel init notice:', dcErr);
@@ -1287,56 +1324,36 @@ export default function StrangerCamApp() {
       }
     } catch {
       setErrorMessage('Gagal membentuk koneksi WebRTC P2P.');
+      setStep('CONNECTION_FAILED');
     }
   };
 
   const startSignalingAndHeartbeat = (currentSessionId: string, partnerId: string, pc: RTCPeerConnection, myUid: string) => {
-    // 1. Instant Real-Time Push Listener via ntfy.sh SSE topic with ?since=all
+    // 1. Instant Real-Time Push via internal SSE stream
     try {
       if (sseRef.current) {
         try { sseRef.current.close(); } catch {}
         sseRef.current = null;
       }
-      const myTopic = `niva_sig_${currentSessionId}_${myUid}`;
-      const sse = new EventSource(`https://ntfy.sh/${myTopic}/sse?since=all`);
+      const sse = new EventSource(`/api/stranger-cam/session/signal/stream?sessionId=${encodeURIComponent(currentSessionId)}&receiverId=${encodeURIComponent(myUid)}`);
       sseRef.current = sse;
       sse.onmessage = (event) => {
         try {
           const raw = JSON.parse(event.data);
-          if (raw && raw.message) {
-            const inner = JSON.parse(raw.message);
-            processIncomingSignal(inner, pc);
-          } else if (raw && raw.signalType) {
+          if (raw && (raw.signalType || raw.payload)) {
             processIncomingSignal(raw, pc);
           }
         } catch {}
+      };
+      sse.onerror = () => {
+        // SSE auto-reconnects, fallback polling guarantees 0 packet loss
       };
     } catch (sseErr) {
       console.warn('SSE connection notice:', sseErr);
     }
 
-    // 2. Multi-Channel Fast Polling fallback:
-    // Polls ntfy JSON (since=all) AND serverless signal API to guarantee 100% signal delivery across Vercel containers
+    // 2. Multi-Channel Fast Polling fallback (every 800ms)
     signalingPollingRef.current = setInterval(async () => {
-      // 2a. Poll ntfy stored messages
-      try {
-        const myTopic = `niva_sig_${currentSessionId}_${myUid}`;
-        const ntfyRes = await fetch(`https://ntfy.sh/${myTopic}/json?poll=1&since=all`);
-        const text = await ntfyRes.text();
-        const lines = text.trim().split('\n');
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const item = JSON.parse(line);
-            if (item && item.message) {
-              const inner = JSON.parse(item.message);
-              processIncomingSignal(inner, pc);
-            }
-          } catch {}
-        }
-      } catch {}
-
-      // 2b. Poll internal API route
       try {
         const res = await fetch(
           `/api/stranger-cam/session/signal?sessionId=${currentSessionId}&receiverId=${myUid}${
@@ -1351,7 +1368,7 @@ export default function StrangerCamApp() {
           }
         }
       } catch {}
-    }, 1000);
+    }, 800);
 
     // 3. Heartbeat (every 2000ms for exit detection)
     heartbeatRef.current = setInterval(async () => {
@@ -1371,7 +1388,13 @@ export default function StrangerCamApp() {
 
   // ── Call Actions: Skip, End, Block, Report ──────────────────────────────────
   const handleSkip = async () => {
-    if (!sessionId) return;
+    if (isSkippingRef.current) return;
+    isSkippingRef.current = true;
+    setStep('SKIPPING');
+
+    const curSessionId = sessionIdRef.current || sessionId;
+    const curUserId = userIdRef.current || userId;
+
     // 1. Notify partner immediately over DataChannel and Push
     if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
       try {
@@ -1381,16 +1404,33 @@ export default function StrangerCamApp() {
     sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'PEER_LEFT', reason: 'Lawan bicara menekan Skip.' }));
 
     clearAllTimers();
-    try {
-      await fetch('/api/stranger-cam/session/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'SKIP', sessionId, userId }),
-      });
-    } catch {
-      // Proceed
+
+    if (peerConnectionRef.current) {
+      try {
+        peerConnectionRef.current.onconnectionstatechange = null;
+        peerConnectionRef.current.oniceconnectionstatechange = null;
+        peerConnectionRef.current.ontrack = null;
+        peerConnectionRef.current.close();
+      } catch {}
+      peerConnectionRef.current = null;
     }
-    enterQueue();
+    remoteStreamRef.current = null;
+    setP2pConnected(false);
+
+    if (curSessionId && curUserId) {
+      try {
+        await fetch('/api/stranger-cam/session/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'SKIP', sessionId: curSessionId, userId: curUserId }),
+        });
+      } catch {}
+    }
+
+    setTimeout(() => {
+      isSkippingRef.current = false;
+      enterQueue();
+    }, 250);
   };
 
   const handleEnd = async () => {
@@ -1747,8 +1787,8 @@ export default function StrangerCamApp() {
         </div>
       )}
 
-      {/* ── STAGE 4: QUEUE ───────────────────────────────────────────────── */}
-      {step === 'QUEUED' && (
+      {/* ── STAGE 4: SEARCHING / QUEUED / SKIPPING ────────────────────────── */}
+      {(step === 'SEARCHING' || step === 'SKIPPING') && (
         <div className="max-w-md mx-auto py-12 text-center space-y-6">
           <div className="relative w-20 h-20 mx-auto">
             <div className="absolute inset-0 rounded-full bg-[#8A5A9A]/30 animate-ping" />
@@ -1763,7 +1803,7 @@ export default function StrangerCamApp() {
               <span>{onlineCount} Pengguna Online di Semarang</span>
             </div>
             <h3 className="text-2xl font-display font-bold text-white">
-              Mencari seseorang di Semarang...
+              {step === 'SKIPPING' ? 'Melewati & mencari stranger baru...' : 'Mencari stranger di Semarang...'}
             </h3>
             <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
               Sistem matchmaking acak sedang menghubungkan Anda dengan pengguna lain di Semarang (Tanpa Perlu Mendaftar & Terbuka untuk Umum).
@@ -1773,11 +1813,15 @@ export default function StrangerCamApp() {
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10 text-xs text-gray-300 space-y-1.5 text-left">
             <div className="flex items-center gap-2 text-emerald-400 font-semibold">
               <CheckCircle2 className="w-4 h-4" />
-              <span>Lokasi Terkonfirmasi: Semarang</span>
+              <span>Lokasi Terkonfirmasi: Semarang (Privacy Preserving)</span>
             </div>
             <div className="flex items-center gap-2 text-purple-300">
               <ShieldCheck className="w-4 h-4" />
               <span>Face Visibility & Perlindungan Anti-Scam Aktif</span>
+            </div>
+            <div className="flex items-center gap-2 text-rose-300">
+              <ShieldCheck className="w-4 h-4" />
+              <span>Zero Recording: Tidak ada rekaman audio/video yang disimpan</span>
             </div>
           </div>
 
@@ -1792,8 +1836,28 @@ export default function StrangerCamApp() {
         </div>
       )}
 
+      {/* ── STAGE 4.5: MATCH FOUND ────────────────────────────────────────── */}
+      {step === 'MATCHED' && (
+        <div className="max-w-md mx-auto py-14 text-center space-y-6">
+          <div className="relative w-20 h-20 mx-auto">
+            <div className="absolute inset-0 rounded-full bg-emerald-500/30 animate-ping" />
+            <div className="relative w-20 h-20 rounded-full bg-gradient-to-r from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-xl">
+              <CheckCircle2 className="w-10 h-10 animate-bounce" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-2xl font-display font-bold text-white">
+              Partner Ditemukan!
+            </h3>
+            <p className="text-sm text-gray-300">
+              Memulai negosiasi WebRTC dan mengaktifkan kamera...
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── STAGE 5: ACTIVE 1-ON-1 CALL WITH FACE SAFETY GATE ─────────────── */}
-      {step === 'CALL' && (
+      {(step === 'CONNECTING' || step === 'CONNECTED') && (
         <div className="space-y-4">
           {/* Top Call Info Bar */}
           <div className="flex items-center justify-between px-4 py-2.5 rounded-2xl bg-white/5 border border-white/10">
@@ -2069,6 +2133,117 @@ export default function StrangerCamApp() {
                 <span>Kirim</span>
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── STAGE 5.5: PARTNER LEFT / PEER DISCONNECTED ───────────────────── */}
+      {step === 'PEER_DISCONNECTED' && (
+        <div className="max-w-md mx-auto py-12 text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/30 mx-auto flex items-center justify-center text-amber-400">
+            <UserX className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-2xl font-display font-bold text-white">
+              Stranger Meninggalkan Percakapan
+            </h3>
+            <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+              Lawan bicara telah keluar atau melewati percakapan. Sesi telah dibersihkan secara aman.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 justify-center pt-4">
+            <button
+              onClick={enterQueue}
+              className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] hover:opacity-90 text-white text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2"
+            >
+              <SkipForward className="w-4 h-4" />
+              <span>Cari Stranger Baru</span>
+            </button>
+            <button
+              onClick={() => setStep('DEVICE_SETUP')}
+              className="px-6 py-3.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold border border-white/10 transition-colors"
+            >
+              Kembali ke Pengaturan Media
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── STAGE 5.6: CONNECTION FAILED ──────────────────────────────────── */}
+      {step === 'CONNECTION_FAILED' && (
+        <div className="max-w-md mx-auto py-12 text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/30 mx-auto flex items-center justify-center text-rose-400">
+            <AlertTriangle className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-2xl font-display font-bold text-white">
+              Koneksi Gagal
+            </h3>
+            <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+              {errorMessage || 'Negosiasi WebRTC atau koneksi P2P tidak dapat terhubung. Silakan coba lagi.'}
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 justify-center pt-4">
+            <button
+              onClick={enterQueue}
+              className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:opacity-90 text-white text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>Coba Lagi</span>
+            </button>
+            <button
+              onClick={() => setStep('DEVICE_SETUP')}
+              className="px-6 py-3.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold border border-white/10 transition-colors"
+            >
+              Kembali ke Pengaturan Media
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── STAGE 5.7: PERMISSION DENIED ──────────────────────────────────── */}
+      {step === 'PERMISSION_DENIED' && (
+        <div className="max-w-md mx-auto py-12 text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/30 mx-auto flex items-center justify-center text-rose-400">
+            <VideoOff className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-2xl font-display font-bold text-white">
+              Izin Kamera & Mikrofon Diperlukan
+            </h3>
+            <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+              {errorMessage || 'Stranger Cam memerlukan akses kamera dan mikrofon agar kedua pengguna dapat saling bertatap muka dan berbicara secara realtime.'}
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-white/5 border border-white/10 text-xs text-gray-300 space-y-2 text-left">
+            <div className="font-semibold text-white">Cara mengaktifkan izin:</div>
+            <ul className="list-disc list-inside space-y-1 text-gray-400 text-[11px]">
+              <li><strong className="text-gray-200">Chrome/Edge:</strong> Klik ikon gembok/kamera di sebelah kiri address bar, pilih &quot;Izinkan&quot; untuk Kamera & Mikrofon.</li>
+              <li><strong className="text-gray-200">Safari (iOS):</strong> Buka Pengaturan iPhone → Safari → Kamera & Mikrofon → Izinkan.</li>
+              <li><strong className="text-gray-200">Android Chrome:</strong> Ketuk ikon gembok di samping URL → Izin → Izinkan Kamera & Mikrofon.</li>
+            </ul>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 justify-center pt-4">
+            <button
+              onClick={handleSetupMedia}
+              className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#5B3A6D] via-[#8A5A9A] to-[#C47293] hover:opacity-90 text-white text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2"
+            >
+              <Video className="w-4 h-4" />
+              <span>Coba Izinkan Lagi</span>
+            </button>
+            <button
+              onClick={() => setStep('DEVICE_SETUP')}
+              className="px-6 py-3.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold border border-white/10 transition-colors"
+            >
+              Kembali
+            </button>
           </div>
         </div>
       )}
