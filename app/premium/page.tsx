@@ -220,6 +220,31 @@ export default function PremiumPage() {
               <strong>Penting:</strong> Stranger Chat dan Stranger Cam tetap dapat diakses secara gratis oleh seluruh pengguna Semarang sesuai ketentuan. Premium adalah layer terpisah khusus untuk fitur akun dan ekosistem Telegram.
             </p>
           </div>
+
+          {/* Like Limit & Verification Ecosystem Comparison */}
+          <div className="mt-4 p-4 rounded-2xl bg-white border border-[#5B3A6D]/15 shadow-sm text-left max-w-xl mx-auto space-y-2.5">
+            <div className="text-xs font-bold text-[#5B3A6D] flex items-center gap-1.5 uppercase tracking-wider">
+              <Sparkles className="w-3.5 h-3.5 text-[#8A5A9A]" />
+              <span>Ketentuan Limit Like & Interaksi Telegram:</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#5B3A6D]/10 space-y-1">
+                <div className="text-[10px] text-[#5B3A6D]/70 font-medium">Verifikasi Foto</div>
+                <div className="text-base font-extrabold text-[#17151A]">10 Like</div>
+                <div className="text-[9px] text-[#5B3A6D]/60">per hari</div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#5B3A6D]/10 space-y-1">
+                <div className="text-[10px] text-[#2D8C6A] font-semibold">Foto + KTM</div>
+                <div className="text-base font-extrabold text-[#2D8C6A]">30 Like</div>
+                <div className="text-[9px] text-[#5B3A6D]/60">per hari</div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-[#5B3A6D]/10 border border-[#5B3A6D]/30 space-y-1 ring-1 ring-[#5B3A6D]/20">
+                <div className="text-[10px] text-[#5B3A6D] font-bold">NIVA Premium</div>
+                <div className="text-base font-extrabold text-[#5B3A6D]">50 Like</div>
+                <div className="text-[9px] text-[#5B3A6D]/70">per hari (Maksimal)</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Pricing Cards */}

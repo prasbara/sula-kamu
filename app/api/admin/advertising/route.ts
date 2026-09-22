@@ -5,10 +5,17 @@ import { getDatabase } from '@/src/database/db';
 
 export const dynamic = 'force-dynamic';
 
+import { AdminAuthService } from '@/src/services/auth/adminAuthService';
+
 async function authenticateAdmin(): Promise<{ adminId: string; role: string } | null> {
   const cookieStore = await cookies();
-  const sessionToken = cookieStore.get('niva_admin_session')?.value;
-  if (!sessionToken) return null;
+  const token = cookieStore.get('niva_admin_token')?.value || cookieStore.get('niva_admin_session')?.value;
+  if (!token) return null;
+
+  const valid = AdminAuthService.validateSession(token);
+  if (valid) {
+    return { adminId: valid.adminId, role: valid.role };
+  }
 
   const db = getDatabase();
   const session = db.prepare(`
@@ -16,7 +23,7 @@ async function authenticateAdmin(): Promise<{ adminId: string; role: string } | 
     FROM admin_sessions s
     JOIN admin_users u ON u.id = s.admin_id
     WHERE s.token_hash = ? AND s.is_revoked = 0 AND datetime(s.expires_at) > datetime('now')
-  `).get(sessionToken) as { admin_id: string; role: string } | undefined;
+  `).get(token) as { admin_id: string; role: string } | undefined;
 
   if (!session) return null;
   return { adminId: session.admin_id, role: session.role };

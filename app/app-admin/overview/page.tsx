@@ -103,10 +103,62 @@ export default function AdminOverviewPage() {
         </div>
       </div>
 
+      {/* Real-time Matchmaking & Presence Observability */}
+      <div className="p-5 rounded-2xl bg-[#171420] border border-[#2B2438] space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold tracking-wider text-[#D0C4DC] uppercase flex items-center gap-2">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live Bot Matchmaking & Presence
+            </h2>
+            <p className="text-[11px] text-[#9D93A8] mt-0.5">
+              Sinkronisasi data langsung dari Telegram Bot dan database SQLite (Zero Fake Data).
+            </p>
+          </div>
+          <div className="text-[10px] text-[#9D93A8] font-mono">
+            Heartbeat Window: 15 Menit
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+          <div className="p-3.5 rounded-xl bg-[#0F0D13]/60 border border-[#2B2438]">
+            <div className="text-[11px] text-[#9D93A8]">Currently Online</div>
+            <div className="text-2xl font-bold text-emerald-400 mt-1">
+              {metrics?.currentlyOnline ?? 0}
+            </div>
+            <div className="text-[10px] text-[#6E647D]">Active in last 15 min</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-[#0F0D13]/60 border border-[#2B2438]">
+            <div className="text-[11px] text-[#9D93A8]">Searching Queue</div>
+            <div className="text-2xl font-bold text-amber-400 mt-1">
+              {metrics?.searchingCount ?? 0}
+            </div>
+            <div className="text-[10px] text-[#6E647D]">Waiting for match</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-[#0F0D13]/60 border border-[#2B2438]">
+            <div className="text-[11px] text-[#9D93A8]">Active 20-Min Chats</div>
+            <div className="text-2xl font-bold text-purple-400 mt-1">
+              {metrics?.activeChats ?? 0}
+            </div>
+            <div className="text-[10px] text-[#6E647D]">Live isolated sessions</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-[#0F0D13]/60 border border-[#2B2438]">
+            <div className="text-[11px] text-[#9D93A8]">Completed Sessions</div>
+            <div className="text-2xl font-bold text-sky-400 mt-1">
+              {metrics?.completedSessions ?? 0}
+            </div>
+            <div className="text-[10px] text-[#6E647D]">Server timer expired/ended</div>
+          </div>
+        </div>
+      </div>
+
       {/* Operational Queues Action Grid */}
       <div className="space-y-4">
         <h2 className="text-sm font-semibold tracking-wider text-[#D0C4DC] uppercase">
-          Pending Action Queues (FIFO)
+          Operational Queues & Modul Admin (Live Data)
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -164,7 +216,64 @@ export default function AdminOverviewPage() {
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-[#6E647D]">Dukungan NIVA Premium</div>
+              <div className="text-[11px] text-[#6E647D]">Pusat Bantuan Resmi NIVA</div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-[#8A5A9A] group-hover:translate-x-1 transition-transform" />
+          </Link>
+
+          <Link
+            href="/app-admin/reviews"
+            className="p-5 rounded-2xl bg-[#171420] border border-[#2B2438] hover:border-[#8A5A9A]/50 transition-all flex items-center justify-between group"
+          >
+            <div className="space-y-1">
+              <div className="text-xs text-[#9D93A8]">User Reviews Queue</div>
+              <div className="text-2xl font-bold text-white flex items-center gap-2">
+                <span>{metrics?.pendingReviews ?? 0}</span>
+                {metrics?.pendingReviews > 0 && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    Moderasi
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-[#6E647D]">Ulasan mahasiswa & rating</div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-[#8A5A9A] group-hover:translate-x-1 transition-transform" />
+          </Link>
+
+          <Link
+            href="/app-admin/advertising"
+            className="p-5 rounded-2xl bg-[#171420] border border-[#2B2438] hover:border-[#8A5A9A]/50 transition-all flex items-center justify-between group"
+          >
+            <div className="space-y-1">
+              <div className="text-xs text-[#9D93A8]">Iklan & Kemitraan</div>
+              <div className="text-2xl font-bold text-white flex items-center gap-2">
+                <span>{metrics?.pendingAdInquiries ?? 0}</span>
+                {metrics?.pendingAdInquiries > 0 && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                    Inquiry Baru
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-[#6E647D]">Lead advertiser & sponsor</div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-[#8A5A9A] group-hover:translate-x-1 transition-transform" />
+          </Link>
+
+          <Link
+            href="/app-admin/moderation"
+            className="p-5 rounded-2xl bg-[#171420] border border-[#2B2438] hover:border-[#8A5A9A]/50 transition-all flex items-center justify-between group"
+          >
+            <div className="space-y-1">
+              <div className="text-xs text-[#9D93A8]">Moderation & Strikes</div>
+              <div className="text-2xl font-bold text-white flex items-center gap-2">
+                <span>{metrics?.pendingModeration ?? 0}</span>
+                {metrics?.pendingModeration > 0 && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                    Incident
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-[#6E647D]">Safety pipeline & violations</div>
             </div>
             <ArrowRight className="w-5 h-5 text-[#8A5A9A] group-hover:translate-x-1 transition-transform" />
           </Link>

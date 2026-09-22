@@ -23,6 +23,7 @@ import { StrangerCamService } from '../services/stranger/strangerCamService';
 import { TelegramService } from '../services/telegram/telegramService';
 import { NotifyService } from '../services/notification/notifyService';
 import { BotMatchmakingService } from '../services/matchmaking/botMatchmakingService';
+import { PremiumService } from '../services/premium/premiumService';
 
 export interface SessionData {
   step:
@@ -647,6 +648,44 @@ export function createBot(): Bot<MyContext> {
   };
   bot.command('help', handleHelpCommand);
   bot.callbackQuery('cmd_how_to', handleHelpCommand);
+
+  // ── /premium command & callback ───────────────────────────────────────────
+  const handlePremiumCommand = async (ctx: any) => {
+    const telegramId = ctx.from?.id.toString() || '';
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+    const entitlement = PremiumService.getUserEntitlement(user.id);
+    const appBaseUrl = (config.APP_URL || 'https://nivaconnected.vercel.app').replace(/\/+$/, '');
+
+    const statusText = entitlement.isPremium 
+      ? `⭐ *Status: PREMIUM ACTIVE (${entitlement.planName || 'NIVA Premium'})*\nBerlaku hingga: *${entitlement.expiresAt ? new Date(entitlement.expiresAt).toLocaleDateString('id-ID') : '-'}*`
+      : `⚪ *Status: FREE (Standard)*`;
+
+    await ctx.reply(
+      `💎 *NIVA OFFICIAL ECOSYSTEM — NIVA PREMIUM*\n\n` +
+      `${statusText}\n\n` +
+      `*Ketentuan Limit Like & Interaksi Telegram:*\n` +
+      `• 📷 *Verifikasi Foto Only:* Limit *10 like* / hari\n` +
+      `• 🎓 *Foto + KTM Mahasiswa:* Limit *30 like* / hari\n` +
+      `• 💎 *NIVA Premium:* Kuota naik menjadi *50 like* / hari (Maksimal)\n\n` +
+      `*Pilihan Paket Resmi NIVA:*\n` +
+      `1. *Paket NIVA 1* — 7 Hari (Rp5.000)\n` +
+      `   _Akses benefit ekosistem Telegram & Akun NIVA, limit 50 like/hari, badge premium._\n\n` +
+      `2. *Paket NIVA 2* — 30 Hari (Rp8.000)\n` +
+      `   _Akses benefit ekosistem Telegram & Akun NIVA, limit 50 like/hari, badge premium 30 hari._\n\n` +
+      `*Penting:* Stranger Chat & Stranger Cam tetap dapat diakses secara gratis oleh seluruh pengguna Semarang. Premium adalah layer terpisah khusus untuk fitur akun & ekosistem Telegram.\n\n` +
+      `_Upgrade dan lakukan pembayaran melalui portal resmi:_`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .url('💎 Buka Paket Premium', `${appBaseUrl}/premium`)
+          .row()
+          .text('🎫 Bantuan / Konfirmasi', 'cmd_open_ticket')
+          .text('🏠 Menu Utama', 'cmd_main_menu'),
+      }
+    );
+  };
+  bot.command('premium', handlePremiumCommand);
+  bot.callbackQuery('cmd_niva_premium', handlePremiumCommand);
 
   // ── Matchmaking Callbacks ─────────────────────────────────────────────────
   bot.callbackQuery(/user_match:SKIP:(.+)/, async (ctx) => {

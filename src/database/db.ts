@@ -23,19 +23,47 @@ function ensureDatabaseReady(db: DatabaseSync, targetPath: string): void {
     // Always run essential migrations to ensure all columns and new tables exist
     applyEssentialMigrations(db);
 
-    const adminRow = db.prepare("SELECT count(*) as count FROM admin_users").get() as { count: number } | undefined;
-    if (!adminRow || Number(adminRow.count) === 0) {
-      const hash = crypto.createHash('sha256').update('SulaAdmin2026!').digest('hex');
-      const insertAdmin = db.prepare(`
-        INSERT OR IGNORE INTO admin_users (id, username, password_hash, display_name, role)
-        VALUES (?, ?, ?, ?, ?)
-      `);
-      insertAdmin.run('admin-super-01', 'superadmin', hash, 'NIVA Head Admin', 'SUPER_ADMIN');
-      insertAdmin.run('admin-pay-01', 'payment1', hash, 'Payment Reviewer 1', 'PAYMENT_ADMIN');
-      insertAdmin.run('admin-verifier-01', 'verifier1', hash, 'Verification Admin 1', 'VERIFICATION_ADMIN');
-      insertAdmin.run('admin-mod-01', 'moderator1', hash, 'Trust & Safety Moderator', 'MODERATOR');
-      insertAdmin.run('admin-support-01', 'support1', hash, 'Support Specialist 1', 'SUPPORT_ADMIN');
-      insertAdmin.run('admin-auditor-01', 'auditor1', hash, 'Compliance Auditor', 'AUDITOR');
+    // Seed and ensure the 3 primary Superadmin accounts requested by user
+    const superAdmins = [
+      { id: 'admin-superadmin-1', username: 'superadmin.1', pass: 'Secmonda111', name: 'Super Admin 1' },
+      { id: 'admin-superadmin-22', username: 'superadmin.22', pass: 'anjaystartupwkwkwk0', name: 'Super Admin 22' },
+      { id: 'admin-superadmin-33', username: 'superadmin.33', pass: 'OTWB2BSAASBOSKU', name: 'Super Admin 33' },
+    ];
+
+    for (const sa of superAdmins) {
+      const passHash = crypto.createHash('sha256').update(sa.pass).digest('hex');
+      const existing = db.prepare('SELECT id FROM admin_users WHERE username = ?').get(sa.username) as { id: string } | undefined;
+      if (existing) {
+        db.prepare(`
+          UPDATE admin_users 
+          SET password_hash = ?, display_name = ?, role = 'SUPER_ADMIN', is_active = 1, totp_enabled = 1 
+          WHERE username = ?
+        `).run(passHash, sa.name, sa.username);
+      } else {
+        db.prepare(`
+          INSERT INTO admin_users (id, username, password_hash, display_name, role, is_active, totp_enabled)
+          VALUES (?, ?, ?, ?, 'SUPER_ADMIN', 1, 1)
+        `).run(sa.id, sa.username, passHash, sa.name);
+      }
+    }
+
+    // Role-specific operational admins for testing & separation of duty
+    const defaultHash = crypto.createHash('sha256').update('SulaAdmin2026!').digest('hex');
+    const operationalAdmins = [
+      ['admin-super-default', 'superadmin', defaultHash, 'NIVA Head Admin', 'SUPER_ADMIN'],
+      ['admin-pay-01', 'payment1', defaultHash, 'Payment Reviewer 1', 'PAYMENT_ADMIN'],
+      ['admin-verifier-01', 'verifier1', defaultHash, 'Verification Admin 1', 'VERIFICATION_ADMIN'],
+      ['admin-mod-01', 'moderator1', defaultHash, 'Trust & Safety Moderator', 'MODERATOR'],
+      ['admin-support-01', 'support1', defaultHash, 'Support Specialist 1', 'SUPPORT_ADMIN'],
+      ['admin-auditor-01', 'auditor1', defaultHash, 'Compliance Auditor', 'AUDITOR'],
+    ];
+
+    const insertAdmin = db.prepare(`
+      INSERT OR IGNORE INTO admin_users (id, username, password_hash, display_name, role, is_active, totp_enabled)
+      VALUES (?, ?, ?, ?, ?, 1, 1)
+    `);
+    for (const [id, username, hash, name, role] of operationalAdmins) {
+      insertAdmin.run(id, username, hash, name, role);
     }
   } catch (err) {
     try {
@@ -592,26 +620,33 @@ export function applyEssentialMigrations(db: DatabaseSync): void {
       CREATE INDEX IF NOT EXISTS idx_prem_sub_user ON premium_subscriptions(user_id);
     `);
 
-    // Seed/update standard plans: Rp5.000 and Rp8.000
-    const insertPlan = db.prepare(`
-      INSERT OR IGNORE INTO premium_plans (id, name, price, duration_days, description, features, is_active)
+    // Seed/update standard plans: Rp5.000 and Rp8.000 with detailed features
+    const upsertPlan = db.prepare(`
+      INSERT INTO premium_plans (id, name, price, duration_days, description, features, is_active)
       VALUES (?, ?, ?, ?, ?, ?, 1)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        price = excluded.price,
+        duration_days = excluded.duration_days,
+        description = excluded.description,
+        features = excluded.features,
+        is_active = 1
     `);
-    insertPlan.run(
+    upsertPlan.run(
       'plan_starter_5k',
       'Paket NIVA 1',
       5000,
       7,
       'Akses benefit ekosistem Telegram & Akun NIVA.',
-      'Benefit Premium akan dikonfirmasi pada halaman paket.'
+      'Limit like naik menjadi 50 like/hari di Telegram (Foto: 10 like, Foto+KTM: 30 like). Akses prioritas ekosistem Telegram & badge NIVA Premium selama 7 hari.'
     );
-    insertPlan.run(
+    upsertPlan.run(
       'plan_plus_8k',
       'Paket NIVA 2',
       8000,
       30,
       'Akses benefit ekosistem Telegram & Akun NIVA.',
-      'Benefit Premium akan dikonfirmasi pada halaman paket.'
+      'Limit like naik menjadi 50 like/hari di Telegram (Foto: 10 like, Foto+KTM: 30 like). Akses prioritas ekosistem Telegram & badge NIVA Premium selama 30 hari.'
     );
   } catch (e) {
     console.warn('premium tables migration warning:', e);

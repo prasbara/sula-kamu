@@ -104,7 +104,13 @@ export default function AdminUsersPage() {
                 {users.map((u) => (
                   <tr key={u.user_id} className="hover:bg-white/[0.02] transition-colors">
                     <td className="py-3.5 px-4">
-                      <div className="font-semibold text-white">{u.display_name || 'Tanpa Profil'}</div>
+                      <div className="font-semibold text-white flex items-center gap-1.5">
+                        <span>{u.display_name || 'Tanpa Profil'}</span>
+                        <span className={`inline-block w-2 h-2 rounded-full ${u.online_status === 'ONLINE' ? 'bg-emerald-400' : 'bg-zinc-600'}`} title={u.online_status || 'OFFLINE'} />
+                      </div>
+                      <div className="text-[11px] text-sky-400 font-medium">
+                        {u.telegram_username ? `@${u.telegram_username}` : (u.telegram_id ? `TG ID: ${u.telegram_id}` : '-')}
+                      </div>
                       <div className="font-mono text-[10px] text-[#6E647D]">{u.user_id.slice(0, 13)}...</div>
                     </td>
                     <td className="py-3.5 px-4 text-[#C8BED4]">
@@ -113,12 +119,12 @@ export default function AdminUsersPage() {
                     <td className="py-3.5 px-4">
                       {u.verification_status === 'KTM_VERIFIED' && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          <ShieldCheck className="w-3 h-3" /> Student
+                          <ShieldCheck className="w-3 h-3" /> Student (KTM)
                         </span>
                       )}
                       {u.verification_status === 'PHOTO_VERIFIED' && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                          <Camera className="w-3 h-3" /> Photo
+                          <Camera className="w-3 h-3" /> Photo Only
                         </span>
                       )}
                       {u.verification_status === 'UNVERIFIED' && (
@@ -131,23 +137,38 @@ export default function AdminUsersPage() {
                     <td className="py-3.5 px-4">
                       {u.subscription_status === 'PREMIUM_ACTIVE' ? (
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#E8B4C8]/10 text-[#E8B4C8] border border-[#E8B4C8]/30">
-                          <CreditCard className="w-3 h-3" /> Premium
+                          <CreditCard className="w-3 h-3" /> Premium (50 likes)
                         </span>
                       ) : (
-                        <span className="text-[10px] text-[#6E647D]">Free</span>
+                        <span className="text-[10px] text-[#6E647D]">
+                          Free ({u.verification_status === 'KTM_VERIFIED' ? '30' : '10'} likes)
+                        </span>
                       )}
                     </td>
                     <td className="py-3.5 px-4 font-mono text-[11px] text-[#C8BED4]">
                       {u.daily_likes_used} likes
                     </td>
-                    <td className="py-3.5 px-4">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        u.account_status === 'ACTIVE'
-                          ? 'bg-emerald-500/10 text-emerald-400'
-                          : 'bg-rose-500/10 text-rose-400'
-                      }`}>
-                        {u.account_status}
-                      </span>
+                    <td className="py-3.5 px-4 space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          u.account_status === 'ACTIVE'
+                            ? 'bg-emerald-500/10 text-emerald-400'
+                            : 'bg-rose-500/10 text-rose-400'
+                        }`}>
+                          {u.account_status}
+                        </span>
+                        {u.bot_state && (
+                          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                            u.bot_state === 'CHATTING'
+                              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                              : u.bot_state === 'SEARCHING'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : 'bg-zinc-800 text-zinc-400'
+                          }`}>
+                            {u.bot_state}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3.5 px-4 text-right">
                       <Link
