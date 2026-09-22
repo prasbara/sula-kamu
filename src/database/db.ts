@@ -295,6 +295,26 @@ export function initDatabase(customPath?: string): void {
     "CREATE INDEX IF NOT EXISTS idx_mod_events_severity ON moderation_events(severity, review_status)",
     "CREATE INDEX IF NOT EXISTS idx_mod_events_expiry ON moderation_events(expires_at, review_status)",
     "CREATE INDEX IF NOT EXISTS idx_user_restrictions_status ON user_restrictions(restriction_type, restricted_until)",
+    // Strict Semarang Geolocation Gate migrations
+    "ALTER TABLE location_confirmations ADD COLUMN location_status TEXT DEFAULT 'LOCATION_VERIFIED'",
+    "ALTER TABLE location_confirmations ADD COLUMN accuracy REAL",
+    "ALTER TABLE location_confirmations ADD COLUMN risk_score REAL DEFAULT 0.0",
+    "ALTER TABLE location_confirmations ADD COLUMN session_id TEXT",
+    `CREATE TABLE IF NOT EXISTS location_verifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      session_id TEXT,
+      location_status TEXT NOT NULL,
+      region TEXT NOT NULL,
+      accuracy REAL,
+      risk_score REAL NOT NULL DEFAULT 0.0,
+      verified_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_loc_verif_user ON location_verifications(user_id, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_loc_verif_session ON location_verifications(session_id)",
   ];
 
   for (const sql of migrations) {

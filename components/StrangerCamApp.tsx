@@ -447,85 +447,92 @@ export default function StrangerCamApp() {
     }
   };
 
-  // ── Step 2: Semarang Location Confirmation ─────────────────────────────────
-  const handleConfirmLocation = async (useGps: boolean) => {
+  // ── Step 2: Semarang Hard Geolocation Gate ─────────────────────────────────
+  const [geoGateState, setGeoGateState] = useState<
+    | 'LOCATION_REQUIRED'
+    | 'LOCATION_REQUESTING'
+    | 'LOCATION_ACQUIRED'
+    | 'LOCATION_VERIFYING'
+    | 'LOCATION_VERIFIED'
+    | 'LOCATION_UNCERTAIN'
+    | 'LOCATION_DENIED'
+    | 'LOCATION_STALE'
+    | 'LOCATION_OUTSIDE'
+    | 'LOCATION_SPOOF_SUSPECTED'
+  >('LOCATION_REQUIRED');
+  const [verifiedRegion, setVerifiedRegion] = useState<string>('');
+
+  const handleConfirmLocation = () => {
+    if (typeof window === 'undefined' || !('geolocation' in navigator)) {
+      setGeoGateState('LOCATION_DENIED');
+      setErrorMessage('Browser Anda tidak mendukung fitur Geolocation API.');
+      return;
+    }
+
     setLoading(true);
     setErrorMessage('');
-    setLocationStatus(useGps ? 'Memeriksa sinyal GPS browser...' : 'Mengonfirmasi wilayah Semarang...');
+    setGeoGateState('LOCATION_REQUESTING');
+    setLocationStatus('Meminta izin lokasi GPS browser...');
 
-    if (useGps && 'geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          try {
-            const coords = {
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-            };
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        setGeoGateState('LOCATION_ACQUIRED');
+        setLocationStatus('Sinyal GPS diperoleh. Memvalidasi batas administratif resmi...');
+        setGeoGateState('LOCATION_VERIFYING');
 
-            const res = await fetch('/api/stranger-cam/location-confirm', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                userId,
-                method: 'BROWSER_GEO',
-                coords,
-              }),
-            });
+        try {
+          const coords = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+            timestamp: position.timestamp || Date.now(),
+          };
 
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.message || 'Lokasi tidak berada di area Semarang.');
+          const res = await fetch('/api/stranger-cam/location-confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId,
+              coords,
+              sessionId: sessionId || undefined,
+            }),
+          });
 
-            setLocationVerified(true);
-            setStep('DEVICE_SETUP');
-          } catch (err: any) {
-            setErrorMessage(err.message || 'Gagal memverifikasi lokasi Semarang melalui GPS.');
-          } finally {
-            setLoading(false);
+          const data = await res.json();
+          if (!res.ok || !data.allowed) {
+            const status = data.locationStatus || 'LOCATION_OUTSIDE';
+            setGeoGateState(status);
+            setErrorMessage(data.reason || data.message || 'Lokasi berada di luar wilayah Kota atau Kabupaten Semarang.');
+            return;
           }
-        },
-        async () => {
-          setLocationStatus('GPS tidak tersedia atau ditolak. Mengalihkan ke konfirmasi pernyataan mandiri...');
-          try {
-            const res = await fetch('/api/stranger-cam/location-confirm', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                userId,
-                method: 'USER_CONFIRMATION',
-              }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.message);
-            setLocationVerified(true);
-            setStep('DEVICE_SETUP');
-          } catch (err: any) {
-            setErrorMessage(err.message || 'Gagal mengonfirmasi lokasi.');
-          } finally {
-            setLoading(false);
-          }
-        },
-        { timeout: 10000, enableHighAccuracy: false }
-      );
-    } else {
-      try {
-        const res = await fetch('/api/stranger-cam/location-confirm', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId,
-            method: 'USER_CONFIRMATION',
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message);
-        setLocationVerified(true);
-        setStep('DEVICE_SETUP');
-      } catch (err: any) {
-        setErrorMessage(err.message || 'Gagal mengonfirmasi lokasi.');
-      } finally {
+
+          setGeoGateState('LOCATION_VERIFIED');
+          setVerifiedRegion(data.region);
+          setLocationVerified(true);
+          setLocationStatus('Lokasi terverifikasi di ' + (data.region === 'CITY_SEMARANG' ? 'Kota Semarang' : 'Kabupaten Semarang'));
+          setStep('DEVICE_SETUP');
+        } catch (err: any) {
+          setGeoGateState('LOCATION_DENIED');
+          setErrorMessage(err.message || 'Gagal memverifikasi koordinat lokasi ke server.');
+        } finally {
+          setLoading(false);
+        }
+      },
+      (geoErr) => {
         setLoading(false);
-      }
-    }
+        setGeoGateState('LOCATION_DENIED');
+        if (geoErr.code === geoErr.PERMISSION_DENIED) {
+          setErrorMessage('Izin lokasi ditolak. Aktifkan izin lokasi browser untuk menggunakan NIVA Stranger Cam.');
+        } else if (geoErr.code === geoErr.POSITION_UNAVAILABLE) {
+          setErrorMessage('Posisi GPS perangkat tidak tersedia. Pastikan sensor lokasi/GPS aktif.');
+        } else if (geoErr.code === geoErr.TIMEOUT) {
+          setErrorMessage('Waktu permintaan lokasi GPS habis. Silakan coba kembali.');
+        } else {
+          setErrorMessage('Gagal memperoleh posisi GPS perangkat.');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
   };
 
   // ── Step 3: Camera & Face Presence Setup (Requirement 15 & 29) ─────────────
@@ -1626,57 +1633,187 @@ export default function StrangerCamApp() {
         </div>
       )}
 
-      {/* ── STAGE 2: SEMARANG LOCATION CHECK ─────────────────────────────── */}
+      {/* ── STAGE 2: STRICT SEMARANG HARD GEOLOCATION GATE ───────────────── */}
       {step === 'LOCATION_CHECK' && (
         <div className="max-w-md mx-auto py-8 text-center space-y-6">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 mx-auto flex items-center justify-center text-white shadow-lg">
-            <MapPin className="w-8 h-8" />
-          </div>
+          {geoGateState === 'LOCATION_DENIED' ? (
+            <>
+              <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/30 mx-auto flex items-center justify-center text-rose-400 shadow-lg">
+                <AlertTriangle className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-bold">
+                  <span>Izin Lokasi Diperlukan</span>
+                </div>
+                <h3 className="text-2xl font-display font-black text-white">
+                  Lokasi diperlukan
+                </h3>
+                <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+                  NIVA Stranger Chat dan Stranger Cam hanya tersedia untuk pengguna yang sedang berada di Kota atau Kabupaten Semarang.
+                  Aktifkan izin lokasi browser untuk melanjutkan.
+                </p>
+              </div>
+              {errorMessage && (
+                <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/30 text-rose-300 text-xs text-left flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+              <div className="pt-2">
+                <button
+                  onClick={handleConfirmLocation}
+                  disabled={loading}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:opacity-95 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                >
+                  <MapPin className="w-4 h-4" />
+                  <span>{loading ? 'Meminta Izin Browser...' : 'Aktifkan Izin Lokasi & Coba Lagi'}</span>
+                </button>
+              </div>
+            </>
+          ) : geoGateState === 'LOCATION_OUTSIDE' ? (
+            <>
+              <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/30 mx-auto flex items-center justify-center text-amber-400 shadow-lg">
+                <MapPin className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-bold">
+                  <span>Wilayah Tidak Memenuhi Syarat</span>
+                </div>
+                <h3 className="text-2xl font-display font-black text-white">
+                  NIVA belum tersedia di lokasi Anda
+                </h3>
+                <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+                  Stranger Chat dan Stranger Cam saat ini hanya tersedia di Kota dan Kabupaten Semarang.
+                </p>
+              </div>
+              {errorMessage && (
+                <div className="p-3.5 rounded-xl bg-amber-950/50 border border-amber-500/30 text-amber-300 text-xs text-left flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+              <div className="pt-2">
+                <button
+                  onClick={handleConfirmLocation}
+                  disabled={loading}
+                  className="w-full py-3.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-sm border border-white/15 transition-all flex items-center justify-center gap-2"
+                >
+                  <MapPin className="w-4 h-4" />
+                  <span>{loading ? 'Memvalidasi...' : 'Cek Lokasi Kembali'}</span>
+                </button>
+              </div>
+            </>
+          ) : geoGateState === 'LOCATION_UNCERTAIN' ? (
+            <>
+              <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/30 mx-auto flex items-center justify-center text-amber-400 shadow-lg">
+                <AlertTriangle className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-bold">
+                  <span>Sinyal GPS Lemah</span>
+                </div>
+                <h3 className="text-2xl font-display font-black text-white">
+                  Akurasi GPS Belum Memadai
+                </h3>
+                <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+                  Sinyal lokasi terdeteksi dengan error radius besar atau berada dekat perbatasan administratif. Mohon aktifkan GPS presisi tinggi (High Accuracy) pada pengaturan perangkat Anda untuk melanjutkan.
+                </p>
+              </div>
+              {errorMessage && (
+                <div className="p-3.5 rounded-xl bg-amber-950/50 border border-amber-500/30 text-amber-300 text-xs text-left flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+              <div className="pt-2">
+                <button
+                  onClick={handleConfirmLocation}
+                  disabled={loading}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:opacity-95 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                >
+                  <MapPin className="w-4 h-4" />
+                  <span>{loading ? 'Meminta GPS Presisi Tinggi...' : 'Coba Lagi dengan Akurasi Tinggi'}</span>
+                </button>
+              </div>
+            </>
+          ) : geoGateState === 'LOCATION_SPOOF_SUSPECTED' ? (
+            <>
+              <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/30 mx-auto flex items-center justify-center text-rose-400 shadow-lg">
+                <AlertTriangle className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-bold">
+                  <span>Anomali Lokasi</span>
+                </div>
+                <h3 className="text-2xl font-display font-black text-white">
+                  Anomali Lokasi Terdeteksi
+                </h3>
+                <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+                  Sistem mendeteksi indikasi manipulasi lokasi atau pergerakan tidak wajar. Mohon nonaktifkan mock location, VPN, atau proxy untuk melanjutkan.
+                </p>
+              </div>
+              {errorMessage && (
+                <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/30 text-rose-300 text-xs text-left flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+              <div className="pt-2">
+                <button
+                  onClick={handleConfirmLocation}
+                  disabled={loading}
+                  className="w-full py-3.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-sm border border-white/15 transition-all flex items-center justify-center gap-2"
+                >
+                  <MapPin className="w-4 h-4" />
+                  <span>{loading ? 'Memvalidasi...' : 'Verifikasi Ulang'}</span>
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 mx-auto flex items-center justify-center text-white shadow-lg">
+                <MapPin className="w-8 h-8" />
+              </div>
 
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-bold">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Semarang Geofence Check</span>
-            </div>
-            <h3 className="text-2xl font-display font-black text-white">
-              Konfirmasi Wilayah Semarang
-            </h3>
-            <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
-              Stranger Cam didedikasikan khusus komunitas Semarang. Kami hanya memastikan wilayah (region) Anda tanpa menyimpan koordinat GPS presisi Anda.
-            </p>
-          </div>
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-bold">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Batas Administratif Resmi Semarang</span>
+                </div>
+                <h3 className="text-2xl font-display font-black text-white">
+                  Konfirmasi lokasi Anda
+                </h3>
+                <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+                  Stranger Chat dan Stranger Cam hanya tersedia untuk pengguna yang sedang berada di Kota atau Kabupaten Semarang.
+                  NIVA menggunakan lokasi perangkat hanya untuk memastikan kelayakan wilayah. Lokasi presisi Anda tidak ditampilkan kepada pengguna lain.
+                </p>
+              </div>
 
-          {locationStatus && (
-            <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-emerald-300 animate-pulse">
-              {locationStatus}
-            </div>
+              {locationStatus && (
+                <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-emerald-300 animate-pulse">
+                  {locationStatus}
+                </div>
+              )}
+
+              {errorMessage && (
+                <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/30 text-rose-300 text-xs text-left flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              <div className="space-y-3 pt-2">
+                <button
+                  onClick={handleConfirmLocation}
+                  disabled={loading}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:opacity-95 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                >
+                  <MapPin className="w-4 h-4" />
+                  <span>{loading ? 'Memvalidasi Batas Wilayah...' : 'Konfirmasi Lokasi Saya (Aktifkan GPS)'}</span>
+                </button>
+              </div>
+            </>
           )}
-
-          {errorMessage && (
-            <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/30 text-rose-300 text-xs text-left flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
-
-          <div className="space-y-3 pt-2">
-            <button
-              onClick={() => handleConfirmLocation(true)}
-              disabled={loading}
-              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:opacity-95 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
-            >
-              <MapPin className="w-4 h-4" />
-              <span>Verifikasi Otomatis via Browser GPS</span>
-            </button>
-
-            <button
-              onClick={() => handleConfirmLocation(false)}
-              disabled={loading}
-              className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold text-xs border border-white/10 transition-all"
-            >
-              Saya Sedang Berada di Semarang (Pernyataan Mandiri)
-            </button>
-          </div>
         </div>
       )}
 

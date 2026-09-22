@@ -19,13 +19,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Support both direct coords { latitude, longitude, accuracy, timestamp } and coords object
     const lat = body.latitude !== undefined ? Number(body.latitude) : (body.coords?.latitude !== undefined ? Number(body.coords.latitude) : NaN);
     const lon = body.longitude !== undefined ? Number(body.longitude) : (body.coords?.longitude !== undefined ? Number(body.coords.longitude) : NaN);
     const accuracy = body.accuracy !== undefined ? Number(body.accuracy) : (body.coords?.accuracy !== undefined ? Number(body.coords.accuracy) : undefined);
     const timestamp = body.timestamp !== undefined ? Number(body.timestamp) : (body.coords?.timestamp !== undefined ? Number(body.coords.timestamp) : Date.now());
 
-    // Strict requirement: GPS coordinates MUST be provided (no USER_CONFIRMATION or bypass allowed)
     if (Number.isNaN(lat) || Number.isNaN(lon)) {
       return NextResponse.json(
         {
@@ -34,7 +32,7 @@ export async function POST(req: NextRequest) {
           locationStatus: 'LOCATION_REQUIRED',
           locationVerified: false,
           error: 'COORDINATES_REQUIRED',
-          message: 'Izin lokasi browser dan koordinat GPS diperlukan untuk mengakses NIVA Stranger Cam.',
+          message: 'Izin lokasi browser dan koordinat GPS diperlukan.',
         },
         { status: 400 }
       );

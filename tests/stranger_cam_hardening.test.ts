@@ -57,7 +57,7 @@ async function runHardeningTests() {
       VALUES (?, ?, ?, 21, 'inst-undip', 'Teknik', 'Mahasiswa Semarang', '["Ngobrol"]', 'NEW_FRIENDS', 1, datetime('now'), datetime('now'))
     `).run(profileId, userId, name);
 
-    StrangerCamService.confirmSemarangLocation(userId, 'USER_CONFIRMATION');
+    StrangerCamService.confirmSemarangLocation(userId, 'BROWSER_GEO', { latitude: -6.9904, longitude: 110.4229 });
     return userId;
   }
 

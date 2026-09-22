@@ -14,7 +14,8 @@ out/
 *.db-journal
 *.db-wal
 *.db-shm
-data/
+/data/
+!src/data/**
 backups/
 
 # Secure Encrypted Temporary Uploads

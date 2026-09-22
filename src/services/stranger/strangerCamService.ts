@@ -18,6 +18,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../database/db';
 import { config } from '../../config/index';
 import { NotifyService } from '../notification/notifyService';
+import { GeolocationService } from '../geo/geolocationService';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -180,7 +181,6 @@ export class StrangerCamService {
     if (!user && userId && typeof userId === 'string' && userId.trim().length >= 6) {
       try {
         StrangerCamService.getOrCreateStrangerUser({ userId: userId.trim(), is18Plus: true });
-        StrangerCamService.confirmSemarangLocation(userId.trim(), 'USER_CONFIRMATION');
         user = db.prepare(`
           SELECT id, status, is_18_plus, birth_date FROM users WHERE id = ?
         `).get(userId.trim()) as { id: string; status: string; is_18_plus: number; birth_date?: string } | undefined;
@@ -208,19 +208,12 @@ export class StrangerCamService {
       };
     }
 
-    // 2. Semarang Location Confirmation Check
-    const location = db.prepare(`
-      SELECT region, confirmed_at, expires_at
-      FROM location_confirmations
-      WHERE user_id = ?
-        AND region = 'SEMARANG'
-        AND datetime(expires_at) > datetime('now')
-    `).get(userId) as { region: string; confirmed_at: string; expires_at: string } | undefined;
-
-    if (!location) {
+    // 2. Strict Semarang Geolocation Gate Check (Kota or Kabupaten Semarang)
+    const locationStatus = GeolocationService.isUserLocationFresh(userId);
+    if (!locationStatus.verified) {
       return {
         eligible: false,
-        reason: 'Konfirmasi lokasi di wilayah Semarang diperlukan sebelum bergabung.',
+        reason: locationStatus.reason || 'Konfirmasi lokasi di wilayah Kota atau Kabupaten Semarang diperlukan sebelum bergabung.',
         requiresAge: false,
         requiresLocation: true,
       };
@@ -246,7 +239,8 @@ export class StrangerCamService {
   public static confirmSemarangLocation(
     userId: string,
     method: 'BROWSER_GEO' | 'USER_CONFIRMATION' | 'IP_LOOKUP',
-    coords?: { latitude: number; longitude: number }
+    coords?: { latitude: number; longitude: number; accuracy?: number; timestamp?: number },
+    sessionId?: string
   ): {
     success: boolean;
     region: string;
@@ -267,38 +261,29 @@ export class StrangerCamService {
       throw new Error('User not found');
     }
 
-    // If coordinates supplied via Browser Geolocation, validate against bounding box
-    if (coords) {
-      const { latitude, longitude } = coords;
-      const inSemarang =
-        latitude >= SEMARANG_BBOX.minLat &&
-        latitude <= SEMARANG_BBOX.maxLat &&
-        longitude >= SEMARANG_BBOX.minLon &&
-        longitude <= SEMARANG_BBOX.maxLon;
-
-      if (!inSemarang) {
-        throw new Error('Lokasi GPS berada di luar area Semarang. NIVA Stranger Cam saat ini hanya untuk area Semarang.');
-      }
+    // Coordinates MUST be provided via GPS fix (no self-declaration or IP bypass)
+    if (!coords || typeof coords.latitude !== 'number' || typeof coords.longitude !== 'number') {
+      throw new Error('Izin lokasi browser dan koordinat GPS diperlukan untuk konfirmasi wilayah Semarang.');
     }
 
-    // Write minimal record without storing raw coordinates
-    db.prepare(`
-      INSERT INTO location_confirmations (user_id, region, method, confirmed_at, expires_at)
-      VALUES (?, 'SEMARANG', ?, datetime('now'), datetime('now', '+${LOCATION_CONFIRMATION_WINDOW_HOURS} hours'))
-      ON CONFLICT(user_id) DO UPDATE SET
-        region = 'SEMARANG',
-        method = ?,
-        confirmed_at = datetime('now'),
-        expires_at = datetime('now', '+${LOCATION_CONFIRMATION_WINDOW_HOURS} hours')
-    `).run(userId, method, method);
+    const verification = GeolocationService.verifyLocation({
+      userId,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      accuracy: coords.accuracy,
+      timestamp: coords.timestamp,
+      sessionId,
+    });
 
-    const record = db.prepare('SELECT expires_at FROM location_confirmations WHERE user_id = ?').get(userId) as { expires_at: string };
+    if (!verification.allowed) {
+      throw new Error(verification.reason || 'Lokasi berada di luar wilayah Kota atau Kabupaten Semarang.');
+    }
 
     return {
       success: true,
-      region: STRANGER_CAM_REGION,
-      expiresAt: record.expires_at,
-      message: 'Lokasi Semarang berhasil dikonfirmasi. Berlaku selama 24 jam.',
+      region: verification.region,
+      expiresAt: verification.expiresAt || new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      message: `Lokasi ${verification.region === 'CITY_SEMARANG' ? 'Kota Semarang' : 'Kabupaten Semarang'} berhasil diverifikasi.`,
     };
   }
 
@@ -334,22 +319,13 @@ export class StrangerCamService {
       };
     }
 
-    let eligibility = this.checkEligibility(userId);
+    const eligibility = this.checkEligibility(userId);
     if (!eligibility.eligible) {
-      if (eligibility.reason === 'Pengguna tidak ditemukan.') {
-        try {
-          StrangerCamService.getOrCreateStrangerUser({ userId, is18Plus: true });
-          StrangerCamService.confirmSemarangLocation(userId, 'USER_CONFIRMATION');
-          eligibility = this.checkEligibility(userId);
-        } catch {}
-      }
-      if (!eligibility.eligible) {
-        return {
-          success: false,
-          status: 'INELIGIBLE',
-          message: eligibility.reason || 'Syarat kelayakan belum terpenuhi.',
-        };
-      }
+      return {
+        success: false,
+        status: 'INELIGIBLE',
+        message: eligibility.reason || 'Syarat kelayakan belum terpenuhi.',
+      };
     }
 
     const db = getDatabase();
@@ -997,6 +973,70 @@ export class StrangerCamService {
     }
 
     return signals;
+  }
+
+  /**
+   * Rechecks location of a user during an active session.
+   * If user has moved outside Kota/Kabupaten Semarang, immediately terminates the session!
+   */
+  public static recheckSessionLocation(
+    sessionId: string,
+    userId: string,
+    coords: { latitude: number; longitude: number; accuracy?: number; timestamp?: number }
+  ): {
+    valid: boolean;
+    region?: string;
+    sessionEnded: boolean;
+    reason?: string;
+  } {
+    const db = getDatabase();
+    const verification = GeolocationService.verifyLocation({
+      userId,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      accuracy: coords.accuracy,
+      timestamp: coords.timestamp,
+      sessionId,
+    });
+
+    if (!verification.allowed) {
+      // Terminate the active session immediately!
+      const session = db.prepare('SELECT id, status, user_a_id, user_b_id FROM stranger_sessions WHERE id = ?').get(sessionId) as any;
+      if (session && (session.status === 'CONNECTED' || session.status === 'MATCHING')) {
+        db.prepare(`
+          UPDATE stranger_sessions
+          SET status = 'ENDED',
+              ended_at = datetime('now'),
+              end_reason = 'OUTSIDE_ALLOWED_REGION',
+              updated_at = datetime('now')
+          WHERE id = ?
+        `).run(sessionId);
+
+        const partnerId = session.user_a_id === userId ? session.user_b_id : session.user_a_id;
+        if (partnerId && partnerId !== 'ANON_PEER') {
+          SignalBus.emit(sessionId, partnerId, {
+            signalType: 'CANDIDATE',
+            payload: JSON.stringify({
+              type: 'PEER_LEFT',
+              reason: 'Sesi diakhiri: Lokasi berada di luar wilayah Kota atau Kabupaten Semarang.',
+            }),
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+
+      return {
+        valid: false,
+        sessionEnded: true,
+        reason: 'OUTSIDE_ALLOWED_REGION',
+      };
+    }
+
+    return {
+      valid: true,
+      region: verification.region,
+      sessionEnded: false,
+    };
   }
 
   /**

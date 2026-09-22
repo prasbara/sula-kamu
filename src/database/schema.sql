@@ -542,13 +542,39 @@ CREATE TABLE IF NOT EXISTS stranger_queue (
 -- 35. Location Confirmations (Minimal data: Semarang region only, no permanent raw GPS)
 CREATE TABLE IF NOT EXISTS location_confirmations (
     user_id TEXT PRIMARY KEY,
-    region TEXT NOT NULL DEFAULT 'SEMARANG',
-    method TEXT NOT NULL CHECK(method IN ('BROWSER_GEO', 'USER_CONFIRMATION', 'IP_LOOKUP')),
+    region TEXT NOT NULL DEFAULT 'CITY_SEMARANG',
+    method TEXT NOT NULL,
+    location_status TEXT NOT NULL DEFAULT 'LOCATION_VERIFIED',
+    accuracy REAL,
+    risk_score REAL NOT NULL DEFAULT 0.0,
+    session_id TEXT,
     confirmed_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT NOT NULL,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_location_confirmations_expiry ON location_confirmations(expires_at);
+
+-- 35b. Ephemeral Location Verifications Audit Log
+CREATE TABLE IF NOT EXISTS location_verifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    session_id TEXT,
+    location_status TEXT NOT NULL CHECK(location_status IN (
+      'LOCATION_REQUIRED', 'LOCATION_REQUESTING', 'LOCATION_ACQUIRED',
+      'LOCATION_VERIFYING', 'LOCATION_VERIFIED', 'LOCATION_UNCERTAIN',
+      'LOCATION_DENIED', 'LOCATION_STALE', 'LOCATION_OUTSIDE', 'LOCATION_SPOOF_SUSPECTED'
+    )),
+    region TEXT NOT NULL CHECK(region IN ('CITY_SEMARANG', 'REGENCY_SEMARANG', 'OUTSIDE_SEMARANG', 'UNKNOWN')),
+    accuracy REAL,
+    risk_score REAL NOT NULL DEFAULT 0.0,
+    verified_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_location_verifications_user ON location_verifications(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_location_verifications_session ON location_verifications(session_id);
+
 
 -- 36. Stranger Cam User Reports
 CREATE TABLE IF NOT EXISTS stranger_reports (

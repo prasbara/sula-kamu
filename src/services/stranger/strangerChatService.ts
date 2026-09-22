@@ -21,6 +21,7 @@ import { ContentModerationPipeline, REDACTED_MESSAGE_NOTICE, MAX_MESSAGE_LENGTH 
 import { StrikeService } from '../safety/strikeService';
 import { StrangerCamService, SignalBus } from './strangerCamService';
 import { NotifyService } from '../notification/notifyService';
+import { GeolocationService } from '../geo/geolocationService';
 
 // Ephemeral in-memory message store per session (data minimization: cleared on session end)
 const sessionMessageStore = new Map<string, StrangerChatMessage[]>();
@@ -211,7 +212,13 @@ export class StrangerChatService {
 
     const recipientId = session.user_a_id === senderId ? session.user_b_id : session.user_a_id;
 
-    // 2. Active Restriction Check
+    // 2. Strict Geolocation Freshness Check
+    const locationStatus = GeolocationService.isUserLocationFresh(senderId);
+    if (!locationStatus.verified) {
+      throw new Error(`Pesan ditolak: ${locationStatus.reason || 'Verifikasi lokasi di Kota atau Kabupaten Semarang diperlukan.'}`);
+    }
+
+    // 3. Active Restriction Check
     const restriction = StrikeService.getUserRestriction(senderId);
     if (restriction.isRestricted) {
       throw new Error(restriction.reason || 'Akun Anda sedang dibatasi.');
@@ -526,6 +533,58 @@ export class StrangerChatService {
       success: true,
       reportId,
       message: 'Laporan telah diterima dan diteruskan ke tim keamanan NIVA. Sesi dihentikan.',
+    };
+  }
+
+  /**
+   * Rechecks location of a user during an active text chat session.
+   * If user relocates outside Semarang, session is terminated immediately.
+   */
+  public static recheckSessionLocation(
+    sessionId: string,
+    userId: string,
+    coords: { latitude: number; longitude: number; accuracy?: number; timestamp?: number }
+  ): {
+    valid: boolean;
+    region?: string;
+    sessionEnded: boolean;
+    reason?: string;
+  } {
+    const db = getDatabase();
+    const verification = GeolocationService.verifyLocation({
+      userId,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      accuracy: coords.accuracy,
+      timestamp: coords.timestamp,
+      sessionId,
+    });
+
+    if (!verification.allowed) {
+      const session = db.prepare('SELECT id, status, user_a_id, user_b_id FROM stranger_sessions WHERE id = ?').get(sessionId) as any;
+      if (session && session.status === 'CONNECTED') {
+        this.terminateSession(sessionId, 'OUTSIDE_ALLOWED_REGION');
+        const partnerId = session.user_a_id === userId ? session.user_b_id : session.user_a_id;
+        if (partnerId) {
+          SignalBus.emit(sessionId, partnerId, {
+            type: 'PARTNER_SKIPPED',
+            sessionId,
+            reason: 'Sesi diakhiri: Lawan bicara berada di luar area Kota/Kabupaten Semarang.',
+          });
+        }
+      }
+
+      return {
+        valid: false,
+        sessionEnded: true,
+        reason: 'OUTSIDE_ALLOWED_REGION',
+      };
+    }
+
+    return {
+      valid: true,
+      region: verification.region,
+      sessionEnded: false,
     };
   }
 

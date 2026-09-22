@@ -57,7 +57,7 @@ async function runTelegramEcosystemTests() {
       VALUES (?, ?, ?, 21, 'inst-undip', 'Informatika', 'Mahasiswa Semarang', '["Coding"]', 'NEW_FRIENDS', 1, datetime('now'), datetime('now'))
     `).run(profileId, userId, name);
 
-    StrangerCamService.confirmSemarangLocation(userId, 'USER_CONFIRMATION');
+    StrangerCamService.confirmSemarangLocation(userId, 'BROWSER_GEO', { latitude: -6.9904, longitude: 110.4229 });
     return { id: userId, telegramId: tgId };
   }
 

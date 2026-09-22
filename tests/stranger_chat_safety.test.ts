@@ -292,10 +292,10 @@ describe('NIVA Stranger Chat — Production-Grade Safety & Anti-Scam System', ()
     before(() => {
       // Setup both users as 18+ and confirmed Semarang
       StrangerCamService.getOrCreateStrangerUser({ userId: userA, is18Plus: true });
-      StrangerCamService.confirmSemarangLocation(userA, 'USER_CONFIRMATION');
+      StrangerCamService.confirmSemarangLocation(userA, 'BROWSER_GEO', { latitude: -6.9904, longitude: 110.4229 });
 
       StrangerCamService.getOrCreateStrangerUser({ userId: userB, is18Plus: true });
-      StrangerCamService.confirmSemarangLocation(userB, 'USER_CONFIRMATION');
+      StrangerCamService.confirmSemarangLocation(userB, 'BROWSER_GEO', { latitude: -6.9904, longitude: 110.4229 });
     });
 
     let activeSessionId: string;
