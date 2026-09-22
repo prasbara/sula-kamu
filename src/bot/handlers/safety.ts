@@ -1,5 +1,5 @@
 import { InlineKeyboard } from 'grammy';
-import { ReportCategory } from '../../types/index.js';
+import { ReportCategory } from '../../types/index';
 
 export class SafetyHandler {
   public static getReportCategoryKeyboard(targetUserId: string): InlineKeyboard {

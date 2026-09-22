@@ -17,6 +17,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../database/db';
 import { config } from '../../config/index';
+import { NotifyService } from '../notification/notifyService';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -402,6 +403,15 @@ export class StrangerCamService {
         const session = db.prepare('SELECT * FROM stranger_sessions WHERE id = ?').get(sessionId);
         db.exec('COMMIT;');
 
+        // Real event notification to Admin Bot & linked Telegram users
+        try {
+          NotifyService.notifyMatchCreated({
+            sessionId,
+            userAId: userId,
+            userBId: match.user_id,
+          }).catch(() => {});
+        } catch {}
+
         return {
           success: true,
           status: 'CONNECTED',
@@ -625,6 +635,17 @@ export class StrangerCamService {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(reportId, sessionId, reporterId, reportedUserId, reason, details || null);
 
+    // Real notification to Admin Bot
+    try {
+      NotifyService.notifyReportCreated({
+        reportId,
+        reporterId,
+        reportedUserId,
+        reason,
+        sessionId,
+      }).catch(() => {});
+    } catch {}
+
     // 2. Log safety event
     const eventId = uuidv4();
     const riskScore = reason === 'NUDITY' || reason === 'UNDERAGE_CONCERN' ? 1.0 : 0.8;
@@ -673,6 +694,30 @@ export class StrangerCamService {
     `).run(sessionId, userId, `ENDED_BY_${userId}`);
 
     return { success: true, message: 'Percakapan selesai.' };
+  }
+
+  /**
+   * End session alias
+   */
+  public static endSession(
+    sessionId: string,
+    userId: string,
+    endReason?: string
+  ): { success: boolean; message: string } {
+    return this.endCall(sessionId, userId);
+  }
+
+  /**
+   * Report stranger alias
+   */
+  public static reportStranger(
+    sessionId: string,
+    reporterId: string,
+    reportedUserId: string,
+    reason: ReportReason,
+    details?: string
+  ): { success: boolean; message: string } {
+    return this.reportUser(sessionId, reporterId, reportedUserId, reason, details);
   }
 
   // ── Moderation & Anti-Scam ──────────────────────────────────────────────────

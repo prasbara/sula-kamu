@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../database/db';
 import { ModerationService } from '../safety/moderationService';
+import { NotifyService } from '../notification/notifyService';
 import { config } from '../../config/index';
 
 export interface SupportTicket {
@@ -67,6 +68,15 @@ export class SupportService {
     `).run(msgId, ticketId);
 
     const created = db.prepare('SELECT * FROM support_tickets WHERE id = ?').get(ticketId) as unknown as SupportTicket;
+
+    // Trigger Admin Alert via NotifyNIVABot
+    try {
+      NotifyService.notifyNewTicket(
+        created,
+        'Tiket bantuan Premium dibuka oleh pengguna.'
+      ).catch(() => {});
+    } catch {}
+
     return { ticket: created, isNew: true };
   }
 
@@ -248,6 +258,11 @@ export class SupportService {
         SET status = 'WAITING', updated_at = datetime('now')
         WHERE id = ? AND status != 'CLOSED'
       `).run(ticketId);
+
+      // Alert admin operations bot
+      try {
+        NotifyService.notifyTicketUserReply(ticketId, ticket.user_id, cleanBody).catch(() => {});
+      } catch {}
     } else if (senderType === 'ADMIN' && !isInternal) {
       db.prepare(`
         UPDATE support_tickets 
@@ -255,11 +270,10 @@ export class SupportService {
         WHERE id = ? AND status != 'CLOSED'
       `).run(senderId, ticketId);
 
-      // Section 23: Telegram notification for admin reply
-      SupportService.sendTelegramNotification(
-        ticket.user_id,
-        '💬 *NIVA Admin has replied to your Premium support ticket.*\n\nSilakan cek pesan di website NIVA.'
-      ).catch(() => {});
+      // Real notification to user via main bot
+      try {
+        NotifyService.notifyUserTicketReply(ticket.user_id, ticketId, senderName, cleanBody).catch(() => {});
+      } catch {}
     }
 
     return db.prepare('SELECT * FROM support_messages WHERE id = ?').get(msgId) as unknown as SupportMessage;
@@ -335,17 +349,14 @@ export class SupportService {
       details: `Changed support ticket ${ticketId} status from ${ticket.status} to ${newStatus}. Notes: ${notes || 'none'}`,
     });
 
-    // Section 23: Telegram status change notifications
+    // Telegram status change notifications
     if (newStatus === 'IN_PROGRESS') {
-      SupportService.sendTelegramNotification(
+      NotifyService.sendUserMessage(
         ticket.user_id,
-        '⏳ *Admin NIVA sedang meninjau tiket bantuan Premium Anda.*'
+        `⏳ *Tiket ${ticketId}:* Admin NIVA sedang meninjau tiket bantuan Premium Anda.`
       ).catch(() => {});
     } else if (newStatus === 'RESOLVED') {
-      SupportService.sendTelegramNotification(
-        ticket.user_id,
-        '✅ *Tiket bantuan Premium NIVA Anda telah diselesaikan. Terima kasih!*'
-      ).catch(() => {});
+      NotifyService.notifyUserTicketResolved(ticket.user_id, ticketId).catch(() => {});
     }
   }
 

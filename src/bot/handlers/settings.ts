@@ -1,6 +1,6 @@
 import { InlineKeyboard } from 'grammy';
-import { getDatabase } from '../../database/db.js';
-import { ModerationService } from '../../services/safety/moderationService.js';
+import { getDatabase } from '../../database/db';
+import { ModerationService } from '../../services/safety/moderationService';
 
 export class SettingsHandler {
   public static getSettingsKeyboard(isDiscoverable: boolean): InlineKeyboard {

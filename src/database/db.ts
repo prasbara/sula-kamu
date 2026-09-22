@@ -233,13 +233,25 @@ export function initDatabase(customPath?: string): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (user_id, skipped_user_id)
     )`,
+    `CREATE TABLE IF NOT EXISTS telegram_link_tokens (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
     "ALTER TABLE stranger_sessions ADD COLUMN webrtc_connected_at TEXT",
     "ALTER TABLE stranger_sessions ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
     "ALTER TABLE stranger_queue ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    "ALTER TABLE support_tickets ADD COLUMN telegram_chat_id TEXT",
+    "ALTER TABLE support_messages ADD COLUMN telegram_message_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_stranger_signals_lookup ON stranger_signals(session_id, receiver_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_stranger_queue_entered ON stranger_queue(entered_at)",
     "CREATE INDEX IF NOT EXISTS idx_stranger_sessions_active ON stranger_sessions(status, started_at)",
     "CREATE INDEX IF NOT EXISTS idx_stranger_skips_pair ON stranger_skips(user_id, skipped_user_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_telegram_link_tokens_expiry ON telegram_link_tokens(expires_at, used_at)",
+    "CREATE INDEX IF NOT EXISTS idx_notification_events_status ON notification_events(status, created_at)",
   ];
 
   for (const sql of migrations) {

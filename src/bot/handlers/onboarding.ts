@@ -1,6 +1,7 @@
 import { InlineKeyboard } from 'grammy';
-import { getDatabase } from '../../database/db.js';
-import { Institution, User } from '../../types/index.js';
+import { getDatabase } from '../../database/db';
+import { Institution, User } from '../../types/index';
+import { NotifyService } from '../../services/notification/notifyService';
 import { v4 as uuidv4 } from 'uuid';
 
 export class OnboardingHandler {
@@ -76,6 +77,17 @@ export class OnboardingHandler {
       `).run(id, telegramId);
 
       user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as unknown as User;
+
+      // Real Operational Alert to Admin Bot
+      try {
+        NotifyService.notifyNewUser({
+          userId: id,
+          onboardingStatus: 'PENDING_VERIFICATION',
+          is18Plus: false,
+          semarangEligible: true,
+          sourcePlatform: 'TELEGRAM',
+        }).catch(() => {});
+      } catch {}
     }
 
     return user;

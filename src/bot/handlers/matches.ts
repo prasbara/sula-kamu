@@ -1,5 +1,5 @@
 import { InlineKeyboard } from 'grammy';
-import { Match, Profile } from '../../types/index.js';
+import { Match, Profile } from '../../types/index';
 
 export class MatchesHandler {
   public static renderMatchesList(matches: { match: Match; partnerProfile: Profile }[]): { text: string; keyboard: InlineKeyboard } {

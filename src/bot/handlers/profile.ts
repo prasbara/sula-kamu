@@ -1,7 +1,7 @@
 import { InlineKeyboard } from 'grammy';
 import { v4 as uuidv4 } from 'uuid';
-import { getDatabase } from '../../database/db.js';
-import { Profile, RelationshipIntent } from '../../types/index.js';
+import { getDatabase } from '../../database/db';
+import { Profile, RelationshipIntent } from '../../types/index';
 
 export const SEMARANG_AREAS = [
   'Tembalang',

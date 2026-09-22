@@ -1,6 +1,6 @@
 import { InlineKeyboard } from 'grammy';
-import { DiscoveryCard, MatchingService } from '../../services/matchmaking/matchingService.js';
-import { ProfileHandler } from './profile.js';
+import { DiscoveryCard, MatchingService } from '../../services/matchmaking/matchingService';
+import { ProfileHandler } from './profile';
 
 export class DiscoveryHandler {
   public static renderCardText(card: DiscoveryCard, remainingLikes: number): string {
