@@ -156,12 +156,12 @@ export class PremiumService {
 Nomor Order: ${publicOrderId}
 Paket: ${plan.name}
 Nominal Pembayaran: ${this.formatRupiah(plan.price)}
-Metode: QRIS Manual
+Metode: QRIS via Chat Admin
 Kontak Pembeli: ${params.contactName || 'Pengguna NIVA'} (${params.contactEmail || params.contactTelegram || 'Web Guest'})
 Catatan: ${params.userNote || '-'}
 
 Instruksi:
-Silakan selesaikan pembayaran QRIS dan unggah bukti transfer di tiket ini. Tim NIVA akan memverifikasi dan mengaktifkan akun Anda.`,
+Halo! Pesanan NIVA Premium Anda telah diterima. Admin NIVA akan segera mengirimkan kode pembayaran QRIS resmi melalui ruang percakapan tiket ini. Setelah Anda menerima QRIS dan melakukan transfer, silakan kirimkan bukti pembayaran di sini untuk diverifikasi oleh admin.`,
       contactName: params.contactName || 'Pemesan Premium',
       contactEmail: params.contactEmail || undefined,
       priority: 'HIGH',

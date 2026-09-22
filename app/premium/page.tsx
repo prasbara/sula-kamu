@@ -395,14 +395,14 @@ export default function PremiumPage() {
                 disabled={isSubmittingOrder}
                 className="w-full py-4 rounded-full font-bold text-xs tracking-wider uppercase text-white bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] hover:opacity-95 shadow-md disabled:opacity-50 transition-all flex items-center justify-center gap-2"
               >
-                <span>{isSubmittingOrder ? 'Membuat Pesanan...' : 'Lanjutkan ke Pembayaran QRIS'}</span>
+                <span>{isSubmittingOrder ? 'Membuat Pesanan...' : 'Lanjutkan & Minta QRIS ke Admin'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
           </div>
         )}
 
-        {/* Payment & QRIS Display Step */}
+        {/* Payment & QRIS via Chat Step */}
         {activeOrder && (
           <div className="max-w-2xl mx-auto bg-white rounded-3xl p-6 sm:p-8 border border-[#5B3A6D]/20 shadow-md space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-[#5B3A6D]/10 gap-3">
@@ -424,48 +424,45 @@ export default function PremiumPage() {
               </div>
             </div>
 
-            {/* QRIS Container */}
+            {/* Admin QRIS Delivery Notice Container */}
             <div className="p-6 rounded-2xl bg-[#FAF7F2] border border-[#5B3A6D]/15 flex flex-col items-center text-center space-y-4">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white text-xs font-semibold text-[#5B3A6D] shadow-sm">
-                <QrCode className="w-3.5 h-3.5" />
-                <span>QRIS Pembayaran Resmi NIVA</span>
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#5B3A6D]/10 text-xs font-bold text-[#5B3A6D]">
+                <MessageSquare className="w-3.5 h-3.5 text-[#8A5A9A]" />
+                <span>QRIS Dikirim Langsung oleh Admin via Chat</span>
               </div>
 
-              {qrisInfo?.qrisImageUrl ? (
-                <div className="relative w-64 h-64 rounded-2xl overflow-hidden border border-[#5B3A6D]/20 shadow-sm bg-white p-2">
-                  <Image
-                    src={qrisInfo.qrisImageUrl}
-                    alt="NIVA QRIS"
-                    fill
-                    className="object-contain"
-                  />
-                </div>
-              ) : (
-                <div className="w-60 h-60 rounded-2xl bg-white border-2 border-dashed border-[#5B3A6D]/30 flex flex-col items-center justify-center p-4 text-center">
-                  <QrCode className="w-12 h-12 text-[#5B3A6D]/40 mb-2" />
-                  <p className="text-xs font-bold text-[#5B3A6D]">QRIS NIVA</p>
-                  <p className="text-[10px] text-[#5B3A6D]/70 mt-1">
-                    {qrisInfo?.accountName || 'NIVA Indonesia (QRIS)'}
-                  </p>
-                  <p className="text-[9px] text-[#5B3A6D]/50 mt-2">
-                    Pindai melalui m-Banking (BCA, Mandiri, BRI, BNI) atau e-Wallet (GoPay, OVO, Dana, ShopeePay).
-                  </p>
-                </div>
+              <div className="max-w-md space-y-2">
+                <h3 className="font-bold text-sm text-[#17151A]">
+                  Kode Pembayaran QRIS Akan Dikirimkan Admin Melalui Tiket Dukungan
+                </h3>
+                <p className="text-xs text-[#5B3A6D]/80 leading-relaxed">
+                  Untuk memastikan keamanan transaksi dan keaslian verifikasi, admin NIVA akan mengirimkan gambar/kode QRIS resmi secara langsung di ruang percakapan tiket Anda.
+                </p>
+              </div>
+
+              {ticketInfo?.chatUrl && (
+                <Link
+                  href={ticketInfo.chatUrl}
+                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-full bg-[#5B3A6D] text-white font-bold text-xs hover:bg-[#4A2F59] transition-all shadow-md group"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span>💬 Buka Chat Admin untuk Menerima QRIS</span>
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                </Link>
               )}
 
-              <div className="max-w-md text-xs text-[#5B3A6D]/80 leading-relaxed">
-                {qrisInfo?.instructions ||
-                  'Lakukan transfer tepat sesuai nominal di atas. Setelah transfer berhasil, klik tombol konfirmasi di bawah ini.'}
-              </div>
-
-              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-900 text-[11px] leading-relaxed max-w-md">
-                🛡️ <strong>Keamanan:</strong> NIVA tidak pernah meminta kata sandi, kode OTP, atau PIN perbankan Anda.
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-900 text-[11px] leading-relaxed max-w-md text-left">
+                🛡️ <strong>Catatan Keamanan:</strong> Jangan pernah membagikan password, PIN, atau kode OTP perbankan kepada siapa pun. Lakukan pembayaran hanya melalui kode QRIS resmi yang dikirimkan oleh Admin NIVA di dalam tiket resmi.
               </div>
             </div>
 
             {/* Confirmation & Ticket Section */}
             {!confirmationSuccess ? (
-              <form onSubmit={handleConfirmPayment} className="space-y-4 pt-2">
+              <form onSubmit={handleConfirmPayment} className="space-y-4 pt-3 border-t border-[#5B3A6D]/10">
+                <div className="font-bold text-xs text-[#17151A] flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-[#2D8C6A]" />
+                  <span>Sudah menerima QRIS dari Admin & melakukan transfer?</span>
+                </div>
                 <div className="space-y-1.5 text-xs">
                   <label className="font-semibold text-[#17151A] flex items-center justify-between">
                     <span>Unggah Bukti Transfer (Opsional tetapi mempercepat verifikasi)</span>
