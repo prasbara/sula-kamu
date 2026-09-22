@@ -83,7 +83,7 @@ export function createAdminNotifyBot(): Bot<Context> {
       '/status — Ringkasan kesehatan & metrik sistem',
       '/tickets — Daftar tiket bantuan yang butuh respon',
       '/payments — Daftar bukti pembayaran yang butuh review',
-      '/reply <TICKET_ID> <pesan> — Balas tiket langsung ke user',
+      '/reply [TICKET_ID] [pesan] — Balas tiket langsung ke user',
     ].join('\n');
 
     const keyboard = new InlineKeyboard()
@@ -92,10 +92,16 @@ export function createAdminNotifyBot(): Bot<Context> {
       .row()
       .text('💳 Review Pembayaran', 'adm:LIST_PAYMENTS');
 
-    await ctx.reply(msg, {
-      parse_mode: 'Markdown',
-      reply_markup: keyboard,
-    });
+    try {
+      await ctx.reply(msg, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      });
+    } catch {
+      await ctx.reply(msg.replace(/[*`_]/g, ''), {
+        reply_markup: keyboard,
+      });
+    }
   });
 
   // ── Command: /status ───────────────────────────────────────────────────────
