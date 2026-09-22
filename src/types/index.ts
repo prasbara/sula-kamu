@@ -252,3 +252,84 @@ export interface SecurityEvent {
   ip_address: string | null;
   created_at: string;
 }
+
+// ── Stranger Chat & Production Moderation Engine ───────────────────────────
+
+export type ModerationCategory =
+  | 'PHONE_NUMBER'
+  | 'EXTERNAL_CONTACT'
+  | 'FINANCIAL_SCAM'
+  | 'CREDENTIAL_THEFT'
+  | 'PHISHING_URL'
+  | 'ROMANCE_SCAM'
+  | 'DANGEROUS_CONTENT'
+  | 'SPAM_FLOODING'
+  | 'USER_REPORT'
+  | 'OTHER';
+
+export type ModerationSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export type ModerationAction =
+  | 'ALLOW'
+  | 'WARN'
+  | 'REDACT'
+  | 'BLOCK_MESSAGE'
+  | 'BLOCK_SESSION'
+  | 'TEMP_RESTRICT'
+  | 'ACCOUNT_BLOCK';
+
+export type ModerationReviewStatus = 'PENDING' | 'RESOLVED' | 'DISMISSED';
+
+export interface ModerationEvent {
+  id: string;
+  user_id: string;
+  session_id: string | null;
+  message_id: string | null;
+  category: ModerationCategory;
+  severity: ModerationSeverity;
+  action: ModerationAction;
+  strike_count: number;
+  risk_score: number;
+  evidence_snippet: string | null;
+  created_at: string;
+  expires_at: string | null;
+  review_status: ModerationReviewStatus;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+}
+
+export type RestrictionType = 'NONE' | 'WARNING' | 'TEMP_RESTRICT' | 'BANNED';
+
+export interface UserRestriction {
+  user_id: string;
+  restriction_type: RestrictionType;
+  active_strikes: number;
+  restricted_until: string | null;
+  reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContentModerationResult {
+  allowed: boolean;
+  action: ModerationAction;
+  severity: ModerationSeverity;
+  category: ModerationCategory | null;
+  riskScore: number;
+  flags: string[];
+  redactedContent?: string;
+  warningMessage?: string;
+  strikeEscalation?: boolean;
+  immediateActionRequired?: boolean;
+}
+
+export interface StrangerChatMessage {
+  id: string;
+  sessionId: string;
+  senderId: string;
+  content: string;
+  isRedacted: boolean;
+  timestamp: string;
+  systemWarning?: string;
+}
+

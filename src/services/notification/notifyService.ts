@@ -245,6 +245,28 @@ export class NotifyService {
     await this.sendTelegramMessage(this.adminBotToken, chatId, message, undefined, 'SYSTEM_ALERT', 'system');
   }
 
+  /**
+   * Send security strike or critical restriction alert to NotifyNIVABot
+   */
+  public static async notifyModerationAlert(text: string): Promise<void> {
+    if (!config.NOTIFY_NIVA_ENABLED || !this.adminBotToken) return;
+    const chatId = this.getAdminChatId();
+    if (!chatId) return;
+
+    await this.sendTelegramMessage(
+      this.adminBotToken,
+      chatId,
+      text,
+      {
+        inline_keyboard: [
+          [{ text: '🛡 Buka Antrean Moderasi', url: `${config.APP_URL}/app-admin/moderation` }]
+        ]
+      },
+      'MODERATION_ALERT',
+      'moderation_engine'
+    );
+  }
+
   // ── 2. User Outbound Notifications (NIVASocial @nivasocialmakingbot) ───────
 
   /**

@@ -252,6 +252,49 @@ export function initDatabase(customPath?: string): void {
     "CREATE INDEX IF NOT EXISTS idx_stranger_skips_pair ON stranger_skips(user_id, skipped_user_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_telegram_link_tokens_expiry ON telegram_link_tokens(expires_at, used_at)",
     "CREATE INDEX IF NOT EXISTS idx_notification_events_status ON notification_events(status, created_at)",
+    // Stranger Chat & Moderation Pipeline migrations
+    "ALTER TABLE stranger_sessions ADD COLUMN session_type TEXT DEFAULT 'VIDEO'",
+    `CREATE TABLE IF NOT EXISTS stranger_chat_queue (
+      user_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'QUEUED',
+      interests TEXT DEFAULT '[]',
+      entered_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS moderation_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      session_id TEXT,
+      message_id TEXT,
+      category TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      action TEXT NOT NULL,
+      strike_count INTEGER NOT NULL DEFAULT 0,
+      risk_score REAL NOT NULL DEFAULT 0.0,
+      evidence_snippet TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT,
+      review_status TEXT NOT NULL DEFAULT 'PENDING',
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_restrictions (
+      user_id TEXT PRIMARY KEY,
+      restriction_type TEXT NOT NULL DEFAULT 'NONE',
+      active_strikes INTEGER NOT NULL DEFAULT 0,
+      restricted_until TEXT,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_stranger_chat_queue_entered ON stranger_chat_queue(entered_at)",
+    "CREATE INDEX IF NOT EXISTS idx_mod_events_user ON moderation_events(user_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_mod_events_severity ON moderation_events(severity, review_status)",
+    "CREATE INDEX IF NOT EXISTS idx_mod_events_expiry ON moderation_events(expires_at, review_status)",
+    "CREATE INDEX IF NOT EXISTS idx_user_restrictions_status ON user_restrictions(restriction_type, restricted_until)",
   ];
 
   for (const sql of migrations) {

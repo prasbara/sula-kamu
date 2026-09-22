@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Menu, X, ShieldCheck, Send, Video } from 'lucide-react';
+import { Menu, X, ShieldCheck, Send, Video, MessageSquare } from 'lucide-react';
 import { SITE_CONFIG } from '@/lib/constants';
 
 export default function Navbar() {
@@ -72,6 +72,14 @@ export default function Navbar() {
             >
               <span>Premium</span>
               <span className="text-[9px] bg-[#E8B4C8] text-[#17151A] font-bold px-1.5 py-0.5 rounded-full">Rp5k</span>
+            </Link>
+            <Link
+              href="/stranger-chat"
+              prefetch={true}
+              className="px-2.5 xl:px-3 py-1.5 xl:py-2 text-xs xl:text-sm font-semibold text-[#8A5A9A] bg-[#8A5A9A]/8 hover:bg-[#8A5A9A]/15 border border-[#8A5A9A]/25 rounded-lg xl:rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <MessageSquare className="w-3.5 h-3.5 text-[#8A5A9A]" />
+              <span>Stranger Chat</span>
             </Link>
             <Link
               href="/stranger-cam"
@@ -153,6 +161,18 @@ export default function Navbar() {
             className="block px-3 py-2.5 rounded-lg text-base font-medium text-[#17151A] hover:bg-[#5B3A6D]/10"
           >
             Komunitas Kampus Semarang
+          </Link>
+          <Link
+            href="/stranger-chat"
+            prefetch={true}
+            onClick={() => setIsOpen(false)}
+            className="block px-3 py-2.5 rounded-lg text-base font-semibold text-[#8A5A9A] bg-[#8A5A9A]/10 hover:bg-[#8A5A9A]/15 flex items-center justify-between"
+          >
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-4 h-4 text-[#8A5A9A]" />
+              <span>Stranger Chat</span>
+            </div>
+            <span className="text-[10px] bg-[#8A5A9A] text-white font-bold px-2 py-0.5 rounded-full">Anonim</span>
           </Link>
           <Link
             href="/stranger-cam"

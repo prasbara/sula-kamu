@@ -623,3 +623,70 @@ CREATE TABLE IF NOT EXISTS stranger_presence (
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- 42. Stranger Chat Queue (Random 1-on-1 text matchmaking)
+CREATE TABLE IF NOT EXISTS stranger_chat_queue (
+    user_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'MATCHING', 'CANCELLED')),
+    interests TEXT DEFAULT '[]',
+    entered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stranger_chat_queue_entered ON stranger_chat_queue(entered_at);
+
+-- 43. Production Moderation Events (Three-Strike, Auditing, Anti-Scam Policy Record)
+CREATE TABLE IF NOT EXISTS moderation_events (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    session_id TEXT,
+    message_id TEXT,
+    category TEXT NOT NULL CHECK(category IN (
+        'PHONE_NUMBER',
+        'EXTERNAL_CONTACT',
+        'FINANCIAL_SCAM',
+        'CREDENTIAL_THEFT',
+        'PHISHING_URL',
+        'ROMANCE_SCAM',
+        'DANGEROUS_CONTENT',
+        'SPAM_FLOODING',
+        'USER_REPORT',
+        'OTHER'
+    )),
+    severity TEXT NOT NULL CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+    action TEXT NOT NULL CHECK(action IN (
+        'ALLOW',
+        'WARN',
+        'REDACT',
+        'BLOCK_MESSAGE',
+        'BLOCK_SESSION',
+        'TEMP_RESTRICT',
+        'ACCOUNT_BLOCK'
+    )),
+    strike_count INTEGER NOT NULL DEFAULT 0,
+    risk_score REAL NOT NULL DEFAULT 0.0,
+    evidence_snippet TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT,
+    review_status TEXT NOT NULL DEFAULT 'PENDING' CHECK(review_status IN ('PENDING', 'RESOLVED', 'DISMISSED')),
+    reviewed_by TEXT,
+    reviewed_at TEXT,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_mod_events_user ON moderation_events(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_mod_events_severity ON moderation_events(severity, review_status);
+CREATE INDEX IF NOT EXISTS idx_mod_events_expiry ON moderation_events(expires_at, review_status);
+
+-- 44. User Restrictions (Active strikes & sanctions tracking)
+CREATE TABLE IF NOT EXISTS user_restrictions (
+    user_id TEXT PRIMARY KEY,
+    restriction_type TEXT NOT NULL DEFAULT 'NONE' CHECK(restriction_type IN ('NONE', 'WARNING', 'TEMP_RESTRICT', 'BANNED')),
+    active_strikes INTEGER NOT NULL DEFAULT 0,
+    restricted_until TEXT,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_user_restrictions_status ON user_restrictions(restriction_type, restricted_until);
+
+

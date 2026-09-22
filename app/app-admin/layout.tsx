@@ -113,6 +113,12 @@ export default async function AdminLayout({
             >
               Stranger Cam
             </Link>
+            <Link
+              href="/app-admin/moderation"
+              className="px-3 py-1.5 rounded-lg text-rose-300 hover:text-white bg-rose-500/10 hover:bg-rose-500/20 transition-colors whitespace-nowrap font-semibold border border-rose-500/30"
+            >
+              🛡️ Moderation Queue
+            </Link>
           </nav>
         </div>
       </header>
