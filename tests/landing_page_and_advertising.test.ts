@@ -189,5 +189,33 @@ describe('NIVA Landing Page, Trust Architecture, Reviews & Advertising Test Suit
       assert.ok(stats.totalReviews >= 0, 'totalReviews must be >= 0');
       assert.ok(stats.distribution[5] !== undefined, 'Star 5 distribution must exist');
     });
+
+    test('successfully submits review with UNISSULA institution without FOREIGN KEY constraint failed', () => {
+      // Test the exact scenario from user error report
+      const rev = ReviewService.submitReview({
+        displayName: 'Mahasiswa Anonim',
+        institutionId: 'inst-unissula',
+        rating: 5,
+        reviewText: 'testing production serverless',
+        recommend: true,
+        improvementCategory: 'OTHER',
+        environment: 'PRODUCTION',
+      });
+
+      assert.ok(rev.id, 'Expected review ID');
+      assert.equal(rev.status, 'PENDING_REVIEW');
+      assert.equal(rev.rating, 5);
+      assert.equal(rev.review_text, 'testing production serverless');
+
+      // Verify institutions table has 33 institutions
+      const countRow = db.prepare('SELECT COUNT(*) as count FROM institutions').get() as { count: number };
+      assert.equal(countRow.count, 33, `Expected exactly 33 institutions, found ${countRow.count}`);
+
+      // Verify inst-unissula exists in institutions
+      const unissula = db.prepare("SELECT * FROM institutions WHERE id = 'inst-unissula'").get() as any;
+      assert.ok(unissula, 'Expected inst-unissula to exist');
+      assert.equal(unissula.short_name, 'UNISSULA');
+    });
   });
 });
+

@@ -366,7 +366,7 @@ export default function ReviewsPage() {
                 >
                   <option value="">Pilih kampus (opsional)...</option>
                   {SEMARANG_INSTITUTIONS.map((inst) => (
-                    <option key={inst.shortName} value={`inst-${inst.shortName.toLowerCase()}`}>
+                    <option key={inst.shortName} value={inst.id}>
                       {inst.fullName} ({inst.shortName})
                     </option>
                   ))}

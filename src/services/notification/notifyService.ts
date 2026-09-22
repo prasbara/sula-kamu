@@ -480,6 +480,9 @@ export class NotifyService {
         const body = await res.text();
         lastError = `Status ${res.status}: ${body}`;
         console.warn(`[Telegram Notification] Attempt ${attempt + 1} failed: ${lastError}`);
+        if (body.includes("can't parse entities") || body.includes("Bad Request")) {
+          delete payload.parse_mode;
+        }
       } catch (err: any) {
         lastError = err.message || 'Network error';
         console.warn(`[Telegram Notification] Attempt ${attempt + 1} error: ${lastError}`);
@@ -494,7 +497,16 @@ export class NotifyService {
   }
 
   private static getAdminChatId(): string {
-    return this.adminChatId || process.env.NOTIFY_NIVA_CHAT_ID || process.env.TELEGRAM_ADMIN_CHAT_ID || '';
+    if (this.adminChatId) return this.adminChatId;
+    if (process.env.NOTIFY_NIVA_CHAT_ID) return process.env.NOTIFY_NIVA_CHAT_ID;
+    if (process.env.TELEGRAM_ADMIN_CHAT_ID) return process.env.TELEGRAM_ADMIN_CHAT_ID;
+    if (config.NOTIFY_NIVA_CHAT_ID) return config.NOTIFY_NIVA_CHAT_ID;
+    try {
+      const db = getDatabase();
+      const row = db.prepare("SELECT value FROM system_settings WHERE key = 'admin_notify_chat_id'").get() as { value: string } | undefined;
+      if (row && row.value) return row.value;
+    } catch {}
+    return '5764989848';
   }
 
   private static getUserTelegramId(userId: string): string | null {

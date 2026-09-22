@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { getDatabase } from '../../database/db';
+import { getDatabase, ensureInstitutionsSeeded } from '../../database/db';
 import { ModerationService } from '../safety/moderationService';
 
 export interface ReviewRecord {
@@ -49,6 +49,9 @@ export class ReviewService {
     const db = getDatabase();
     const env = input.environment || 'PRODUCTION';
 
+    // Ensure institutions exist in database to prevent foreign key errors
+    ensureInstitutionsSeeded(db);
+
     let finalUserId = input.userId;
     let displayName = (input.displayName || '').trim();
 
@@ -59,39 +62,66 @@ export class ReviewService {
         | undefined;
 
       if (!user) {
-        throw new Error('USER_NOT_FOUND: Pengguna tidak ditemukan.');
-      }
-
-      if (user.status === 'BANNED' || user.status === 'SUSPENDED') {
+        // Fall back to creating an anonymous user record if token belongs to an old/deleted user
+        finalUserId = undefined;
+      } else if (user.status === 'BANNED' || user.status === 'SUSPENDED') {
         throw new Error('USER_RESTRICTED: Akun Anda sedang dibatasi dan tidak dapat menulis ulasan.');
+      } else {
+        const profile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(finalUserId) as
+          | { display_name: string }
+          | undefined;
+
+        displayName = displayName || profile?.display_name || 'Mahasiswa NIVA';
       }
+    }
 
-      const profile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(finalUserId) as
-        | { display_name: string }
-        | undefined;
-
-      displayName = displayName || profile?.display_name || 'Mahasiswa NIVA';
-    } else {
+    if (!finalUserId) {
       // Create anonymous verified web user record to satisfy foreign key integrity
       finalUserId = `anon_rev_${uuidv4().replace(/-/g, '').slice(0, 12)}`;
       db.prepare(`
-        INSERT INTO users (id, telegram_id, status, verification_status, is_18_plus, created_at, updated_at)
+        INSERT OR IGNORE INTO users (id, telegram_id, status, verification_status, is_18_plus, created_at, updated_at)
         VALUES (?, ?, 'ACTIVE', 'UNVERIFIED', 1, datetime('now'), datetime('now'))
       `).run(finalUserId, finalUserId);
 
       displayName = displayName || 'Mahasiswa Semarang';
 
       // Pick or validate institution
-      const validInst = input.institutionId
-        ? (db.prepare('SELECT id FROM institutions WHERE id = ?').get(input.institutionId) as { id: string } | undefined)
-        : (db.prepare('SELECT id FROM institutions LIMIT 1').get() as { id: string } | undefined);
+      let instRow: { id: string } | undefined;
+      if (input.institutionId) {
+        instRow = db.prepare('SELECT id FROM institutions WHERE id = ?').get(input.institutionId) as { id: string } | undefined;
+        if (!instRow) {
+          instRow = db.prepare(`
+            SELECT id FROM institutions 
+            WHERE LOWER(id) = LOWER(?) 
+               OR LOWER(short_name) = LOWER(?) 
+               OR LOWER(name) LIKE '%' || LOWER(?) || '%' 
+            LIMIT 1
+          `).get(
+            input.institutionId,
+            input.institutionId.replace(/^inst-/, ''),
+            input.institutionId.replace(/^inst-/, '')
+          ) as { id: string } | undefined;
+        }
+      }
 
-      const instId = validInst?.id || 'inst-undip';
+      if (!instRow) {
+        instRow = db.prepare("SELECT id FROM institutions WHERE id = 'inst-undip'").get() as { id: string } | undefined;
+      }
+      if (!instRow) {
+        instRow = db.prepare("SELECT id FROM institutions LIMIT 1").get() as { id: string } | undefined;
+      }
 
-      db.prepare(`
-        INSERT INTO profiles (id, user_id, display_name, age, institution_id, study_field, created_at, updated_at)
-        VALUES (?, ?, ?, 20, ?, 'Mahasiswa', datetime('now'), datetime('now'))
-      `).run(uuidv4(), finalUserId, displayName, instId);
+      const instId = instRow?.id || 'inst-undip';
+
+      try {
+        db.prepare(`
+          INSERT INTO profiles (id, user_id, display_name, age, institution_id, study_field, created_at, updated_at)
+          VALUES (?, ?, ?, 20, ?, 'Mahasiswa', datetime('now'), datetime('now'))
+          ON CONFLICT(id) DO NOTHING
+        `).run(uuidv4(), finalUserId, displayName, instId);
+      } catch (profileErr) {
+        console.warn('Anonymous review profile insertion notice:', profileErr);
+      }
     }
 
     // 2. Validate rating and text

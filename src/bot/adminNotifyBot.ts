@@ -57,6 +57,17 @@ export function createAdminNotifyBot(): Bot<Context> {
   // ── Command: /start ────────────────────────────────────────────────────────
   bot.command('start', async (ctx) => {
     const chatId = ctx.chat?.id;
+    if (chatId) {
+      try {
+        const db = getDatabase();
+        db.prepare(`
+          INSERT INTO system_settings (key, value, description, updated_at)
+          VALUES ('admin_notify_chat_id', ?, 'Active Telegram Chat ID for NIVANotify operational alerts', datetime('now'))
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+        `).run(chatId.toString());
+      } catch {}
+    }
+
     const msg = [
       '🛡 *NIVANotify — Console Operasional Admin NIVA*',
       '',

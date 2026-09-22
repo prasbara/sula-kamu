@@ -14,6 +14,41 @@ CREATE TABLE IF NOT EXISTS institutions (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+INSERT OR IGNORE INTO institutions (id, name, short_name, type, campus_cluster, is_active) VALUES
+('inst-undip', 'Universitas Diponegoro', 'UNDIP', 'UNIVERSITY', 'Tembalang / Pleburan', 1),
+('inst-unnes', 'Universitas Negeri Semarang', 'UNNES', 'UNIVERSITY', 'Sekaran / Gunungpati', 1),
+('inst-uin-walisongo', 'UIN Walisongo Semarang', 'UIN Walisongo', 'UNIVERSITY', 'Ngaliyan', 1),
+('inst-udinus', 'Universitas Dian Nuswantoro', 'UDINUS', 'UNIVERSITY', 'Pendrikan Kidul / Semarang Tengah', 1),
+('inst-unissula', 'Universitas Islam Sultan Agung', 'UNISSULA', 'UNIVERSITY', 'Kaligawe / Genuk', 1),
+('inst-unika', 'Universitas Katolik Soegijapranata', 'SCU (UNIKA)', 'UNIVERSITY', 'Bendan Dhuwur / BSB City', 1),
+('inst-unimus', 'Universitas Muhammadiyah Semarang', 'UNIMUS', 'UNIVERSITY', 'Kedungmundu / Tembalang', 1),
+('inst-usm', 'Universitas Semarang', 'USM', 'UNIVERSITY', 'Tlogosari / Pedurungan', 1),
+('inst-unwahas', 'Universitas Wahid Hasyim', 'UNWAHAS', 'UNIVERSITY', 'Sampangan / Gunungpati', 1),
+('inst-upgris', 'Universitas PGRI Semarang', 'UPGRIS', 'UNIVERSITY', 'Sidodadi / Semarang Timur', 1),
+('inst-unisbank', 'Universitas Stikubank', 'UNISBANK', 'UNIVERSITY', 'Mugas / Kendeng', 1),
+('inst-unaki', 'Universitas AKI', 'UNAKI', 'UNIVERSITY', 'Imam Bonjol / Semarang Tengah', 1),
+('inst-ivet', 'Universitas Ivet', 'UNIVET', 'UNIVERSITY', 'Sampangan', 1),
+('inst-unkaha', 'Universitas Karya Husada Semarang', 'UNKAHA', 'UNIVERSITY', 'Kompol Maksum', 1),
+('inst-telogorejo', 'Universitas Telogorejo', 'Telogorejo', 'UNIVERSITY', 'Puri Anjasmoro', 1),
+('inst-stekom', 'Universitas Sains dan Teknologi Komputer', 'STEKOM', 'UNIVERSITY', 'Majapahit', 1),
+('inst-pandanaran', 'Universitas Pandanaran', 'UNPAND', 'UNIVERSITY', 'Banjarsari / Tembalang', 1),
+('inst-untag', 'Universitas 17 Agustus 1945 Semarang', 'UNTAG Semarang', 'UNIVERSITY', 'Bendan Dhuwur / Gajahmungkur', 1),
+('inst-polines', 'Politeknik Negeri Semarang', 'POLINES', 'POLYTECHNIC', 'Tembalang', 1),
+('inst-polimarin', 'Politeknik Maritim Negeri Indonesia', 'POLIMARIN', 'POLYTECHNIC', 'Bendan Dhuwur', 1),
+('inst-polpu', 'Politeknik Pekerjaan Umum', 'Politeknik PU', 'POLYTECHNIC', 'Tembalang', 1),
+('inst-pip', 'Politeknik Ilmu Pelayaran Semarang', 'PIP Semarang', 'POLYTECHNIC', 'Singosari / Semarang Selatan', 1),
+('inst-akpol', 'Akademi Kepolisian', 'AKPOL', 'POLYTECHNIC', 'Gajahmungkur', 1),
+('inst-polteka', 'Politeknik Katolik Mangunwijaya', 'POLTEKA', 'POLYTECHNIC', 'Tlogosari', 1),
+('inst-binatrada', 'Politeknik Bina Trada Semarang', 'Bina Trada', 'POLYTECHNIC', 'Banyumanik', 1),
+('inst-stibisnis', 'Politeknik STiBISNIS Semarang', 'STiBISNIS', 'POLYTECHNIC', 'Semarang Barat', 1),
+('inst-poltekkes', 'Poltekkes Kemenkes Semarang', 'Poltekkes Semarang', 'HEALTH_ACADEMY', 'Tirto Agung / Banyumanik', 1),
+('inst-stikes-smg', 'STIKES Semarang', 'STIKES Semarang', 'HEALTH_ACADEMY', 'Pedurungan', 1),
+('inst-st-elisabeth', 'STIKES St. Elisabeth Semarang', 'STIKES Elisabeth', 'HEALTH_ACADEMY', 'Kawi / Candi', 1),
+('inst-hakli', 'STIKES Hakli Semarang', 'STIKES Hakli', 'HEALTH_ACADEMY', 'Gajahmungkur', 1),
+('inst-kesdam', 'STIKES Kesdam IV/Diponegoro', 'STIKES Kesdam', 'HEALTH_ACADEMY', 'Watugong / Banyumanik', 1),
+('inst-stifar', 'Sekolah Tinggi Ilmu Farmasi Semarang', 'STIFAR Semarang', 'HEALTH_ACADEMY', 'Plamongansari', 1),
+('inst-widya-husada', 'Universitas Widya Husada Semarang', 'UWHS', 'HEALTH_ACADEMY', 'Subali Raya / Krapyak', 1);
+
 -- 2. System Emergency Settings & Product Configurations
 CREATE TABLE IF NOT EXISTS system_settings (
     key TEXT PRIMARY KEY,

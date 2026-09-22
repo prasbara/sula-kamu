@@ -1,65 +1,12 @@
-import { getDatabase, initDatabase } from './db.js';
+import { getDatabase, initDatabase, ensureInstitutionsSeeded } from './db.js';
 import crypto from 'node:crypto';
 
 export function seedDatabase(customPath?: string): void {
   initDatabase(customPath);
   const db = getDatabase(customPath);
 
-  // 1. Seed Institutions
-  const countStmt = db.prepare('SELECT COUNT(*) as count FROM institutions');
-  const countRow = countStmt.get() as { count: number };
-
-  if (countRow.count < 33) {
-    const insertInst = db.prepare(`
-      INSERT OR IGNORE INTO institutions (id, name, short_name, type, campus_cluster, is_active)
-      VALUES (?, ?, ?, ?, ?, 1)
-    `);
-
-    const institutionsList = [
-      // Universities
-      { id: 'inst-undip', name: 'Universitas Diponegoro', short_name: 'UNDIP', type: 'UNIVERSITY', campus_cluster: 'Tembalang / Pleburan' },
-      { id: 'inst-unnes', name: 'Universitas Negeri Semarang', short_name: 'UNNES', type: 'UNIVERSITY', campus_cluster: 'Sekaran / Gunungpati' },
-      { id: 'inst-uin-walisongo', name: 'UIN Walisongo Semarang', short_name: 'UIN Walisongo', type: 'UNIVERSITY', campus_cluster: 'Ngaliyan' },
-      { id: 'inst-udinus', name: 'Universitas Dian Nuswantoro', short_name: 'UDINUS', type: 'UNIVERSITY', campus_cluster: 'Pendrikan Kidul / Semarang Tengah' },
-      { id: 'inst-unissula', name: 'Universitas Islam Sultan Agung', short_name: 'UNISSULA', type: 'UNIVERSITY', campus_cluster: 'Kaligawe / Genuk' },
-      { id: 'inst-unika', name: 'Universitas Katolik Soegijapranata', short_name: 'SCU (UNIKA)', type: 'UNIVERSITY', campus_cluster: 'Bendan Dhuwur / BSB City' },
-      { id: 'inst-unimus', name: 'Universitas Muhammadiyah Semarang', short_name: 'UNIMUS', type: 'UNIVERSITY', campus_cluster: 'Kedungmundu / Tembalang' },
-      { id: 'inst-usm', name: 'Universitas Semarang', short_name: 'USM', type: 'UNIVERSITY', campus_cluster: 'Tlogosari / Pedurungan' },
-      { id: 'inst-unwahas', name: 'Universitas Wahid Hasyim', short_name: 'UNWAHAS', type: 'UNIVERSITY', campus_cluster: 'Sampangan / Gunungpati' },
-      { id: 'inst-upgris', name: 'Universitas PGRI Semarang', short_name: 'UPGRIS', type: 'UNIVERSITY', campus_cluster: 'Sidodadi / Semarang Timur' },
-      { id: 'inst-unisbank', name: 'Universitas Stikubank', short_name: 'UNISBANK', type: 'UNIVERSITY', campus_cluster: 'Mugas / Kendeng' },
-      { id: 'inst-unaki', name: 'Universitas AKI', short_name: 'UNAKI', type: 'UNIVERSITY', campus_cluster: 'Imam Bonjol / Semarang Tengah' },
-      { id: 'inst-ivet', name: 'Universitas Ivet', short_name: 'UNIVET', type: 'UNIVERSITY', campus_cluster: 'Sampangan' },
-      { id: 'inst-unkaha', name: 'Universitas Karya Husada Semarang', short_name: 'UNKAHA', type: 'UNIVERSITY', campus_cluster: 'Kompol Maksum' },
-      { id: 'inst-telogorejo', name: 'Universitas Telogorejo', short_name: 'Telogorejo', type: 'UNIVERSITY', campus_cluster: 'Puri Anjasmoro' },
-      { id: 'inst-stekom', name: 'Universitas Sains dan Teknologi Komputer', short_name: 'STEKOM', type: 'UNIVERSITY', campus_cluster: 'Majapahit' },
-      { id: 'inst-pandanaran', name: 'Universitas Pandanaran', short_name: 'UNPAND', type: 'UNIVERSITY', campus_cluster: 'Banjarsari / Tembalang' },
-      { id: 'inst-untag', name: 'Universitas 17 Agustus 1945 Semarang', short_name: 'UNTAG Semarang', type: 'UNIVERSITY', campus_cluster: 'Bendan Dhuwur / Gajahmungkur' },
-
-      // Polytechnics and Service Institutions
-      { id: 'inst-polines', name: 'Politeknik Negeri Semarang', short_name: 'POLINES', type: 'POLYTECHNIC', campus_cluster: 'Tembalang' },
-      { id: 'inst-polimarin', name: 'Politeknik Maritim Negeri Indonesia', short_name: 'POLIMARIN', type: 'POLYTECHNIC', campus_cluster: 'Bendan Dhuwur' },
-      { id: 'inst-polpu', name: 'Politeknik Pekerjaan Umum', short_name: 'Politeknik PU', type: 'POLYTECHNIC', campus_cluster: 'Tembalang' },
-      { id: 'inst-pip', name: 'Politeknik Ilmu Pelayaran Semarang', short_name: 'PIP Semarang', type: 'POLYTECHNIC', campus_cluster: 'Singosari / Semarang Selatan' },
-      { id: 'inst-akpol', name: 'Akademi Kepolisian', short_name: 'AKPOL', type: 'POLYTECHNIC', campus_cluster: 'Gajahmungkur' },
-      { id: 'inst-polteka', name: 'Politeknik Katolik Mangunwijaya', short_name: 'POLTEKA', type: 'POLYTECHNIC', campus_cluster: 'Tlogosari' },
-      { id: 'inst-binatrada', name: 'Politeknik Bina Trada Semarang', short_name: 'Bina Trada', type: 'POLYTECHNIC', campus_cluster: 'Banyumanik' },
-      { id: 'inst-stibisnis', name: 'Politeknik STiBISNIS Semarang', short_name: 'STiBISNIS', type: 'POLYTECHNIC', campus_cluster: 'Semarang Barat' },
-
-      // Health Institutions
-      { id: 'inst-poltekkes', name: 'Poltekkes Kemenkes Semarang', short_name: 'Poltekkes Semarang', type: 'HEALTH_ACADEMY', campus_cluster: 'Tirto Agung / Banyumanik' },
-      { id: 'inst-stikes-smg', name: 'STIKES Semarang', short_name: 'STIKES Semarang', type: 'HEALTH_ACADEMY', campus_cluster: 'Pedurungan' },
-      { id: 'inst-st-elisabeth', name: 'STIKES St. Elisabeth Semarang', short_name: 'STIKES Elisabeth', type: 'HEALTH_ACADEMY', campus_cluster: 'Kawi / Candi' },
-      { id: 'inst-hakli', name: 'STIKES Hakli Semarang', short_name: 'STIKES Hakli', type: 'HEALTH_ACADEMY', campus_cluster: 'Gajahmungkur' },
-      { id: 'inst-kesdam', name: 'STIKES Kesdam IV/Diponegoro', short_name: 'STIKES Kesdam', type: 'HEALTH_ACADEMY', campus_cluster: 'Watugong / Banyumanik' },
-      { id: 'inst-stifar', name: 'Sekolah Tinggi Ilmu Farmasi Semarang', short_name: 'STIFAR Semarang', type: 'HEALTH_ACADEMY', campus_cluster: 'Plamongansari' },
-      { id: 'inst-widya-husada', name: 'Universitas Widya Husada Semarang', short_name: 'UWHS', type: 'HEALTH_ACADEMY', campus_cluster: 'Subali Raya / Krapyak' },
-    ];
-
-    for (const inst of institutionsList) {
-      insertInst.run(inst.id, inst.name, inst.short_name, inst.type, inst.campus_cluster);
-    }
-  }
+  // 1. Seed Institutions (All 33 Semarang Institutions)
+  ensureInstitutionsSeeded(db);
 
   // 2. Seed Emergency Switches & Product Configurations
   const insertSetting = db.prepare(`

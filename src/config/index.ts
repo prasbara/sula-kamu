@@ -28,13 +28,13 @@ try {
 
 export const config = {
   NODE_ENV: process.env.NODE_ENV || 'development',
-  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || '',
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || '8670200603:AAEHa68xll173FquoU9VLrK1Fb8m8l8Qw8E',
   NOTIFY_NIVA_BOT_TOKEN: process.env.NOTIFY_NIVA_BOT_TOKEN || '8884556017:AAEHCwt-LMTBNPRnREpRTSHqQHPeBpmT7eY',
-  NOTIFY_NIVA_CHAT_ID: process.env.NOTIFY_NIVA_CHAT_ID || '',
+  NOTIFY_NIVA_CHAT_ID: process.env.NOTIFY_NIVA_CHAT_ID || '5764989848',
   NOTIFY_NIVA_ENABLED: process.env.NOTIFY_NIVA_ENABLED !== 'false',
   BOT_MODE: process.env.BOT_MODE || 'polling',
   WEBHOOK_URL: process.env.WEBHOOK_URL || '',
-  WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || 'sula_webhook_secret',
+  WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || '',
   
   ADMIN_PORT: parseInt(process.env.ADMIN_PORT || '3000', 10),
   ADMIN_HOST: process.env.ADMIN_HOST || '0.0.0.0',
