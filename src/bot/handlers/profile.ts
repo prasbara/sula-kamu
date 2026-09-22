@@ -66,9 +66,9 @@ export class ProfileHandler {
     const interestsList = interestsArr.map((i) => `#${String(i).replace(/\s+/g, '')}`).join(' ');
 
     return (
-      `👤 *PROFIL SULA ANDA*\n\n` +
+      `👤 *PROFIL NIVA ANDA*\n\n` +
       `*Nama:* ${profile.display_name}, ${profile.age}\n` +
-      `🎓 *Kampus:* ${verifiedShortName} (Terverifikasi)\n` +
+      `🎓 *Kampus:* ${verifiedShortName || 'Semarang'}\n` +
       `📚 *Jurusan:* ${profile.study_field}\n` +
       `📍 *Area:* ${profile.coarse_area || 'Semarang'}\n` +
       `🎯 *Tujuan:* ${this.formatIntent(profile.relationship_intent)}\n` +
@@ -95,17 +95,16 @@ export class ProfileHandler {
 
   public static getProfileKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
-      .text('📸 Unggah Foto Profil', 'upload_profile_photo')
+      .text('💬 Cari Match (20 Mnt)', 'user_match_start')
+      .text('⭐ NIVA Premium', 'cmd_niva_premium')
       .row()
-      .text('🛡️ Verifikasi Akun', 'cmd_verify_menu')
-      .text('⭐ NIVA Premium', 'cmd_premium')
+      .text('📸 Unggah Foto', 'upload_profile_photo')
+      .text('🛡️ Verifikasi', 'cmd_verify_menu')
       .row()
       .text('✏️ Ubah Bio', 'edit_bio')
-      .text('✨ Ubah Minat', 'edit_interests')
+      .text('🎓 Ubah Jurusan', 'edit_major')
       .row()
-      .text('🎯 Ubah Tujuan', 'edit_intent')
       .text('📍 Ubah Area', 'edit_area')
-      .row()
-      .text('❤️ Mulai Temukan Teman (Discover)', 'cmd_discover');
+      .text('🏠 Menu Utama', 'cmd_main_menu');
   }
 }

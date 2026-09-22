@@ -28,6 +28,12 @@ export async function GET(req: NextRequest) {
   const openTickets = (db.prepare("SELECT COUNT(*) as count FROM support_tickets WHERE status IN ('OPEN', 'WAITING', 'IN_PROGRESS')").get() as any).count;
   const openReports = (db.prepare("SELECT COUNT(*) as count FROM reports WHERE status = 'OPEN'").get() as any).count;
 
+  // Real-time matchmaking and presence observability metrics
+  const currentlyOnline = (db.prepare("SELECT COUNT(*) as count FROM users WHERE datetime(last_seen_at) >= datetime('now', '-15 minutes')").get() as any).count;
+  const searchingCount = (db.prepare("SELECT COUNT(*) as count FROM match_queue WHERE status = 'SEARCHING'").get() as any).count;
+  const activeChats = (db.prepare("SELECT COUNT(*) as count FROM match_sessions WHERE status = 'ACTIVE'").get() as any).count;
+  const completedSessions = (db.prepare("SELECT COUNT(*) as count FROM match_sessions WHERE status = 'COMPLETED'").get() as any).count;
+
   return NextResponse.json({
     metrics: {
       studentsJoinedTotal: stats.studentsJoined,
@@ -42,6 +48,11 @@ export async function GET(req: NextRequest) {
       pendingPayments,
       openTickets,
       openReports,
+      // Section 19 Observability metrics
+      currentlyOnline,
+      searchingCount,
+      activeChats,
+      completedSessions,
     },
     admin: session,
   });

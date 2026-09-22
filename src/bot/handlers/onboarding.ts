@@ -7,15 +7,15 @@ import { v4 as uuidv4 } from 'uuid';
 export class OnboardingHandler {
   public static getWelcomeMessage(): string {
     return (
-      `🎓 *Selamat datang di SULA*\n` +
+      `🎓 *Selamat datang di NIVA*\n` +
       `_Student Social & Matchmaking Platform_\n` +
       `*"Meet someone worth knowing."*\n\n` +
       `🛡 *Pemberitahuan Netralitas Institusi:*\n` +
-      `SULA adalah platform independen untuk komunitas kampus di Semarang. ` +
-      `SULA bukan layanan resmi kampus, tidak dimiliki, disponsori, atau berafiliasi dengan universitas mana pun.\n\n` +
+      `NIVA adalah platform independen untuk komunitas kampus & dewasa di Semarang. ` +
+      `NIVA bukan layanan resmi kampus, tidak dimiliki, disponsori, atau berafiliasi dengan universitas mana pun.\n\n` +
       `⚠️ *Aturan Utama Keamanan:*\n` +
       `• *18+ Khusus Dewasa*\n` +
-      `• *Wajib Mahasiswa Aktif Semarang (Verifikasi KTM)*\n` +
+      `• *Sesi chat 20 menit aman & terisolasi*\n` +
       `• *Privasi Terjaga:* NIM, email, dan nomor HP tidak pernah dipublikasikan.\n\n` +
       `Apakah Anda berusia 18 tahun atau lebih dan menyetujui ketentuan di atas?`
     );
@@ -65,16 +65,26 @@ export class OnboardingHandler {
   /**
    * Ensure user record exists in database
    */
-  public static getOrCreateUser(telegramId: string): User {
+  public static getOrCreateUser(telegramId: string, username?: string | null, displayName?: string | null): User {
     const db = getDatabase();
     let user = db.prepare('SELECT * FROM users WHERE telegram_id = ?').get(telegramId) as unknown as User | undefined;
 
     if (!user) {
       const id = uuidv4();
+      const cleanUsername = username ? username.replace(/^@/, '').trim() : null;
+      const cleanDisplayName = displayName ? displayName.trim() : null;
+
       db.prepare(`
-        INSERT INTO users (id, telegram_id, status, is_18_plus)
-        VALUES (?, ?, 'PENDING_VERIFICATION', 0)
-      `).run(id, telegramId);
+        INSERT INTO users (
+          id, telegram_id, telegram_username, telegram_display_name,
+          status, verification_status, subscription_status,
+          bot_state, online_status, is_18_plus, last_seen_at, created_at, updated_at
+        ) VALUES (
+          ?, ?, ?, ?,
+          'PENDING_VERIFICATION', 'UNVERIFIED', 'FREE',
+          'NEW', 'ONLINE', 0, datetime('now'), datetime('now'), datetime('now')
+        )
+      `).run(id, telegramId, cleanUsername, cleanDisplayName);
 
       user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as unknown as User;
 
@@ -82,12 +92,19 @@ export class OnboardingHandler {
       try {
         NotifyService.notifyNewUser({
           userId: id,
-          onboardingStatus: 'PENDING_VERIFICATION',
-          is18Plus: false,
-          semarangEligible: true,
-          sourcePlatform: 'TELEGRAM',
+          name: cleanDisplayName || 'Pengguna Baru',
+          institutionName: 'Semarang Community',
+          verificationLevel: 'UNVERIFIED',
+          source: 'Telegram Bot /start',
         }).catch(() => {});
       } catch {}
+    } else {
+      // Update presence
+      db.prepare(`
+        UPDATE users 
+        SET last_seen_at = datetime('now'), online_status = 'ONLINE', updated_at = datetime('now')
+        WHERE id = ?
+      `).run(user.id);
     }
 
     return user;

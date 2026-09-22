@@ -22,6 +22,7 @@ import { SafeChatService } from '../services/chat/safeChatService';
 import { StrangerCamService } from '../services/stranger/strangerCamService';
 import { TelegramService } from '../services/telegram/telegramService';
 import { NotifyService } from '../services/notification/notifyService';
+import { BotMatchmakingService } from '../services/matchmaking/botMatchmakingService';
 
 export interface SessionData {
   step:
@@ -33,6 +34,7 @@ export interface SessionData {
     | 'AWAITING_PROFILE_NAME'
     | 'AWAITING_PROFILE_MAJOR'
     | 'AWAITING_PROFILE_BIO'
+    | 'AWAITING_PROFILE_AREA'
     | 'AWAITING_PROFILE_PHOTO'
     | 'AWAITING_CHAT_MESSAGE'
     | 'AWAITING_TICKET_MESSAGE';
@@ -95,15 +97,16 @@ export function createBot(): Bot<MyContext> {
     bot.api.setMyCommands([
       { command: 'start', description: 'Mulai atau hubungkan akun NIVA' },
       { command: 'menu', description: 'Buka menu utama NIVA' },
-      { command: 'match', description: 'Mulai pencarian Stranger Cam 1-on-1' },
-      { command: 'stop', description: 'Hentikan pencarian atau akhiri sesi obrolan' },
-      { command: 'status', description: 'Lihat status antrean atau sesi aktif' },
-      { command: 'premium', description: 'Informasi dan aktivasi NIVA Premium' },
-      { command: 'ticket', description: 'Buka atau kelola tiket dukungan Premium' },
-      { command: 'support', description: 'Bantuan admin resmi NIVA' },
-      { command: 'profile', description: 'Lihat profil dan status verifikasi' },
-      { command: 'report', description: 'Laporkan pengguna pada sesi aktif' },
+      { command: 'match', description: 'Mulai pencarian match 1-on-1 (20 menit)' },
+      { command: 'stop', description: 'Hentikan pencarian atau akhiri sesi chat' },
+      { command: 'status', description: 'Lihat status antrean atau sesi chat aktif' },
+      { command: 'profile', description: 'Lihat profil dan status akun' },
+      { command: 'edit', description: 'Ubah bio, jurusan, dan area domisili' },
+      { command: 'report', description: 'Laporkan pelanggaran pada sesi aktif' },
       { command: 'block', description: 'Blokir pengguna pada sesi aktif' },
+      { command: 'premium', description: 'Informasi dan aktivasi NIVA Premium' },
+      { command: 'support', description: 'Pusat bantuan admin resmi NIVA' },
+      { command: 'ticket', description: 'Kelola tiket bantuan NIVA' },
       { command: 'help', description: 'Panduan lengkap penggunaan NIVA' },
     ]).catch(() => {});
   } catch {}
@@ -111,33 +114,35 @@ export function createBot(): Bot<MyContext> {
   // ── Helper: Render Main Onboarding / Menu ─────────────────────────────────
   const getMainMenuKeyboard = () => {
     return new InlineKeyboard()
-      .text('🎥 Cari Stranger', 'user_match_start')
+      .text('💬 Cari Match (20 Mnt)', 'user_match_start')
       .text('💎 Premium', 'cmd_niva_premium')
       .row()
-      .text('📖 Cara Menggunakan', 'cmd_how_to')
-      .text('👤 Akun Saya', 'cmd_my_account')
+      .text('👤 Profil Saya', 'cmd_my_account')
+      .text('📊 Status', 'cmd_match_status')
       .row()
-      .text('🎫 Tiket Saya', 'cmd_my_tickets')
-      .text('🆘 Bantuan', 'cmd_support_help');
+      .text('🎫 Tiket Bantuan', 'cmd_open_ticket')
+      .text('📖 Panduan', 'cmd_how_to');
   };
 
   const renderMainMenuText = () => {
     return (
-      `👋 *Selamat datang di NIVA.*\n\n` +
-      `NIVA adalah platform Stranger Cam 1-on-1 untuk pengguna 18+ di komunitas Semarang.\n\n` +
-      `*Fitur Utama:*\n` +
-      `🎥 *Stranger Cam* — Obrolan video acak 1-on-1 langsung di browser\n` +
-      `💎 *Premium* — Kuota prioritas, fitur eksklusif, & support VIP\n` +
-      `🎫 *Premium Support* — Bantuan langsung dari tim admin NIVA\n` +
-      `🔔 *Notification* — Update real-time untuk match dan tiket\n` +
-      `🚫 *Report & Block* — Kontrol keamanan dan privasi ketat\n\n` +
-      `Silakan pilih menu di bawah untuk memulai:`
+      `👋 *Selamat datang di NIVA Bot!*\n\n` +
+      `Platform matchmaking 1-on-1 aman & terisolasi untuk komunitas mahasiswa & dewasa di Semarang.\n\n` +
+      `*Fitur Utama Bot:*\n` +
+      `💬 *Matchmaking 20 Menit* — Chat 1-on-1 langsung di bot dengan server-side timer\n` +
+      `🔒 *Privasi Aman* — Pesan terisolasi total berdasarkan session_id, tanpa kebocoran data\n` +
+      `💎 *NIVA Premium* — Akses prioritas, kuota ekstra, & jalur VIP\n` +
+      `🎫 *Pusat Bantuan* — Sistem ticketing resmi admin NIVA\n` +
+      '🛡 *Safety First* — Kontrol ketat `/report` & `/block` kapan saja\n\n' +
+      `_Silakan pilih menu di bawah atau ketik /match untuk mencari teman mengobrol:_`
     );
   };
 
   // ── /start command ────────────────────────────────────────────────────────
   bot.command('start', async (ctx) => {
     const telegramId = ctx.from?.id.toString() || '';
+    const username = ctx.from?.username || null;
+    const displayName = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(' ') || 'Pengguna NIVA';
     const rawMatch = (ctx.match || '').trim();
     const db = getDatabase();
 
@@ -156,7 +161,7 @@ export function createBot(): Bot<MyContext> {
         `🎉 *Akun NIVA Berhasil Terhubung!*\n\n` +
         `User ID: \`${linkResult.userId}\`\n` +
         `Telegram ID: \`${telegramId}\`\n\n` +
-        `Akun Telegram Anda kini resmi tersinkronisasi dengan website NIVA. Notifikasi dan kontrol Stranger Cam Anda aktif.`,
+        `Akun Telegram Anda kini resmi tersinkronisasi dengan website NIVA. Notifikasi dan kontrol chat aktif.`,
         {
           parse_mode: 'Markdown',
           reply_markup: getMainMenuKeyboard(),
@@ -165,7 +170,7 @@ export function createBot(): Bot<MyContext> {
       return;
     }
 
-    const user = OnboardingHandler.getOrCreateUser(telegramId);
+    const { userId, isNew, botState, user } = BotMatchmakingService.ensureUser(telegramId, username, displayName);
 
     // Emergency switch check
     const regRow = db.prepare("SELECT value FROM system_settings WHERE key = 'registrations_enabled'").get() as { value: string } | undefined;
@@ -174,8 +179,28 @@ export function createBot(): Bot<MyContext> {
       return;
     }
 
-    if (user.status === 'BANNED') {
-      await ctx.reply('⛔ Akun Anda telah ditangguhkan secara permanen karena pelanggaran terhadap Community Guidelines NIVA.');
+    if (user.status === 'BANNED' || user.status === 'SUSPENDED') {
+      await ctx.reply('⛔ Akun Anda telah ditangguhkan karena pelanggaran terhadap Community Guidelines NIVA.');
+      return;
+    }
+
+    // If new user or not verified 18+, initiate onboarding
+    if (botState === 'NEW' || !user.is_18_plus) {
+      BotMatchmakingService.setUserState(userId, 'ONBOARDING');
+      ctx.session.step = 'AWAITING_AGE';
+      await ctx.reply(
+        `👋 *Selamat datang di NIVA Community!*\n\n` +
+        `NIVA adalah platform interaksi sosial 1-on-1 aman & terisolasi untuk komunitas mahasiswa & dewasa 18+ di Semarang.\n\n` +
+        `🛡️ *Ketentuan Komunitas & Privasi:*\n` +
+        `• Khusus usia 18 tahun ke atas.\n` +
+        `• Sesi obrolan 20 menit per match dengan sistem server-side aman.\n` +
+        `• Identitas Telegram dan privasi terlindungi dari lawan bicara.\n\n` +
+        `Apakah Anda berusia 18 tahun atau lebih dan menyetujui ketentuan ini?`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: OnboardingHandler.getAgeGateKeyboard(),
+        }
+      );
       return;
     }
 
@@ -198,10 +223,11 @@ export function createBot(): Bot<MyContext> {
   // ── /match command & callback ─────────────────────────────────────────────
   const handleMatchmaking = async (ctx: any) => {
     const telegramId = ctx.from?.id.toString() || '';
-    const user = OnboardingHandler.getOrCreateUser(telegramId);
-    const db = getDatabase();
+    const username = ctx.from?.username || null;
+    const displayName = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(' ') || 'Pengguna NIVA';
+    const { userId, user } = BotMatchmakingService.ensureUser(telegramId, username, displayName);
 
-    if (user.status === 'BANNED') {
+    if (user.status === 'BANNED' || user.status === 'SUSPENDED') {
       await ctx.reply('⛔ Akun Anda telah ditangguhkan.');
       return;
     }
@@ -211,7 +237,7 @@ export function createBot(): Bot<MyContext> {
       ctx.session.step = 'AWAITING_AGE';
       await ctx.reply(
         `⚠️ *Verifikasi Usia Diperlukan (18+ Only)*\n\n` +
-        `NIVA Stranger Cam dikhususkan untuk pengguna dewasa berusia 18 tahun ke atas di komunitas Semarang.\n\n` +
+        `NIVA dikhususkan untuk pengguna dewasa berusia 18 tahun ke atas di komunitas Semarang.\n\n` +
         `Apakah Anda berusia 18 tahun atau lebih?`,
         {
           parse_mode: 'Markdown',
@@ -221,90 +247,65 @@ export function createBot(): Bot<MyContext> {
       return;
     }
 
-    // Auto-confirm Semarang location if needed
-    try {
-      StrangerCamService.confirmSemarangLocation(user.id, 'USER_CONFIRMATION');
-    } catch {}
-
-    // Check active session
-    const activeSession = StrangerCamService.getActiveSessionForUser(user.id);
-    if (activeSession) {
-      const appBaseUrl = (config.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
-      const camUrl = `${appBaseUrl}/stranger-cam?session=${activeSession.id}&autojoin=true`;
+    // Rule: Reject /match if user is already chatting
+    const active = BotMatchmakingService.getActiveSession(userId);
+    if (active.session) {
       await ctx.reply(
-        `🟢 *Sesi Stranger Cam Masih Berlangsung*\n\n` +
-        `Session ID: \`${activeSession.id}\`\n` +
-        `Status: 🟢 *CONNECTED*\n\n` +
-        `Buka Stranger Cam di browser Anda untuk melanjutkan video:`,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: new InlineKeyboard()
-            .url('🎥 MULAI VIDEO', camUrl)
-            .row()
-            .text('⏭ SKIP', `user_match:SKIP:${activeSession.id}`)
-            .text('🚫 BLOCK', `user_match:BLOCK:${activeSession.id}`)
-            .text('⚠️ REPORT', `user_match:REPORT:${activeSession.id}`)
-            .row()
-            .text('⏹ END', `user_match:END:${activeSession.id}`),
-        }
+        `💬 *Kamu sedang dalam sesi chat aktif.*\n\n` +
+        `Selesaikan sesi chat 20 menit ini terlebih dahulu sebelum mencari match baru.\n\n` +
+        `_Gunakan /stop jika ingin mengakhiri sesi chat saat ini._`,
+        { parse_mode: 'Markdown' }
       );
       return;
     }
 
-    // Check if already in queue
-    const inQueue = db.prepare('SELECT user_id FROM stranger_queue WHERE user_id = ?').get(user.id);
-    if (inQueue) {
-      await ctx.reply(
-        `🔎 *Mencari stranger...*\n\n` +
-        `Status: 🟡 *SEARCHING*\n\n` +
-        `Anda sudah berada di dalam antrean matchmaking Semarang. Jangan tutup Telegram, kami akan segera mencocokkan Anda.`,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: new InlineKeyboard()
-            .text('⏹ Stop Searching', 'user_match:LEAVE_QUEUE')
-            .text('📊 Status', 'cmd_match_status'),
-        }
-      );
-      return;
-    }
-
-    // Join queue through shared matchmaking engine
     try {
-      const result = StrangerCamService.joinQueue(user.id);
-      if (result.status === 'CONNECTED' && result.session) {
-        const appBaseUrl = (config.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
-        const camUrl = `${appBaseUrl}/stranger-cam?session=${result.session.id}&autojoin=true`;
-        await ctx.reply(
-          `🎉 *Stranger ditemukan!*\n\n` +
-          `Session:\n\`${result.session.id}\`\n\n` +
-          `Buka Stranger Cam di browser Anda untuk memulai percakapan:`,
-          {
+      const matchResult = BotMatchmakingService.match(userId);
+
+      if (matchResult.matched && matchResult.session && matchResult.partnerTelegramId) {
+        // Match succeeded! Notify both users atomically
+        const matchNotice = 
+          `🎉 *Match Ditemukan!*\n\n` +
+          `Kamu telah dipasangkan dengan teman mengobrol baru di Semarang.\n\n` +
+          `⏱ *Durasi Obrolan:* 20 Menit (Otomatis selesai jika waktu habis)\n` +
+          `🔒 *Privasi Aman:* Identitas Telegram kamu dirahasiakan.\n\n` +
+          `Ketik pesan teks langsung di bot ini untuk mulai mengobrol! 💬\n` +
+          `Ketik /stop jika ingin mengakhiri obrolan kapan saja.`;
+
+        await ctx.reply(matchNotice, { parse_mode: 'Markdown' });
+
+        try {
+          await ctx.api.sendMessage(parseInt(matchResult.partnerTelegramId), matchNotice, {
             parse_mode: 'Markdown',
-            reply_markup: new InlineKeyboard()
-              .url('🎥 MULAI VIDEO', camUrl)
-              .row()
-              .text('⏭ SKIP', `user_match:SKIP:${result.session.id}`)
-              .text('🚫 BLOCK', `user_match:BLOCK:${result.session.id}`)
-              .text('⚠️ REPORT', `user_match:REPORT:${result.session.id}`)
-              .row()
-              .text('⏹ END', `user_match:END:${result.session.id}`),
-          }
-        );
-      } else {
-        await ctx.reply(
-          `🔎 *Mencari stranger...*\n\n` +
-          `Status:\n🟡 *SEARCHING*\n\n` +
-          `_Jangan tutup NIVA jika ingin melanjutkan ke video conversation._`,
-          {
-            parse_mode: 'Markdown',
-            reply_markup: new InlineKeyboard()
-              .text('⏹ Stop Searching', 'user_match:LEAVE_QUEUE')
-              .text('📊 Status', 'cmd_match_status'),
-          }
-        );
+          });
+        } catch {
+          // Partner notification failure tolerated
+        }
+        return;
       }
+
+      if (matchResult.alreadySearching) {
+        await ctx.reply(
+          `🔎 *Sedang Mencari Match...*\n\n` +
+          `Kamu sudah berada di dalam antrean matchmaking NIVA.\n` +
+          `Mohon tunggu sebentar, bot akan otomatis memberitahu begitu match ditemukan!\n\n` +
+          `Ketik /stop jika ingin membatalkan pencarian.`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      // Placed into queue
+      await ctx.reply(
+        `🔎 *Mencari Teman Mengobrol...*\n\n` +
+        `Status: 🟡 *SEARCHING*\n\n` +
+        `Kamu telah masuk ke dalam antrean matchmaking Semarang.\n` +
+        `Sistem sedang mencocokkanmu dengan pengguna yang online.\n\n` +
+        `_Ketik /stop untuk membatalkan antrean atau /status untuk melihat progres._`,
+        { parse_mode: 'Markdown' }
+      );
     } catch (err: any) {
-      await ctx.reply(`❌ Kendala matchmaking: ${err.message || 'Gagal masuk antrean.'}`);
+      await ctx.reply(`⚠️ ${err.message || 'Gagal memproses matchmaking.'}`);
     }
   };
 
@@ -314,83 +315,71 @@ export function createBot(): Bot<MyContext> {
   // ── /stop command ─────────────────────────────────────────────────────────
   const handleStopMatch = async (ctx: any) => {
     const telegramId = ctx.from?.id.toString() || '';
-    const user = OnboardingHandler.getOrCreateUser(telegramId);
-    const db = getDatabase();
+    const username = ctx.from?.username || null;
+    const displayName = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(' ') || 'Pengguna NIVA';
+    const { userId } = BotMatchmakingService.ensureUser(telegramId, username, displayName);
 
-    const activeSession = StrangerCamService.getActiveSessionForUser(user.id);
-    if (activeSession) {
-      StrangerCamService.endSession(activeSession.id, user.id, 'USER_ENDED');
-      await ctx.reply('⏹ *Sesi Stranger Cam telah diakhiri.*\n\nKoneksi WebRTC dibersihkan. Partner telah dinotifikasi.');
+    const stopResult = BotMatchmakingService.stop(userId, 'USER_ENDED');
+
+    if (stopResult.cancelledQueue) {
+      await ctx.reply('⏹ *Pencarian Dibatalkan.*\n\nKamu telah keluar dari antrean matchmaking. Ketik /match untuk mencari lagi.');
       return;
     }
 
-    const inQueue = db.prepare('SELECT user_id FROM stranger_queue WHERE user_id = ?').get(user.id);
-    if (inQueue) {
-      StrangerCamService.leaveQueue(user.id);
-      await ctx.reply('⏹ *Pencarian dihentikan.* Anda telah keluar dari antrean.');
+    if (stopResult.sessionEnded) {
+      const stopNotice = 
+        `🛑 *Sesi Chat Telah Diakhiri.*\n\n` +
+        `Obrolan ditutup oleh salah satu pengguna.\n` +
+        `Status kamu kini kembali normal.\n\n` +
+        `🔎 *Cari Match Lagi?* Ketik /match untuk memulai pencarian baru.`;
+
+      await ctx.reply(stopNotice, { parse_mode: 'Markdown' });
+
+      if (stopResult.partnerTelegramId) {
+        try {
+          await ctx.api.sendMessage(parseInt(stopResult.partnerTelegramId), stopNotice, {
+            parse_mode: 'Markdown',
+          });
+        } catch {}
+      }
       return;
     }
 
-    await ctx.reply('⚪ Anda tidak sedang dalam antrean atau sesi aktif. Ketik /match untuk mencari stranger.');
+    await ctx.reply('⚪ Kamu tidak sedang dalam antrean atau sesi chat aktif.\n\nKetik /match untuk mencari match baru.');
   };
   bot.command('stop', handleStopMatch);
 
   // ── /status command & callback ────────────────────────────────────────────
   const handleStatusMatch = async (ctx: any) => {
     const telegramId = ctx.from?.id.toString() || '';
-    const user = OnboardingHandler.getOrCreateUser(telegramId);
-    const db = getDatabase();
+    const username = ctx.from?.username || null;
+    const displayName = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(' ') || 'Pengguna NIVA';
+    const { userId } = BotMatchmakingService.ensureUser(telegramId, username, displayName);
 
-    const activeSession = StrangerCamService.getActiveSessionForUser(user.id);
-    if (activeSession) {
-      const elapsed = Math.max(0, Math.floor((Date.now() - new Date(activeSession.started_at).getTime()) / 1000));
-      const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
-      const secs = String(elapsed % 60).padStart(2, '0');
-      const appBaseUrl = (config.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
-      const camUrl = `${appBaseUrl}/stranger-cam?session=${activeSession.id}&autojoin=true`;
+    const statusInfo = BotMatchmakingService.getStatus(userId);
 
-      await ctx.reply(
-        `Status:\n🟢 *CONNECTED*\n\n` +
-        `Session: \`${activeSession.id}\`\n` +
-        `Partner: *Anonymous*\n` +
-        `Duration: *${mins}:${secs}*`,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: new InlineKeyboard()
-            .url('🎥 Open Stranger Cam', camUrl)
-            .row()
-            .text('⏭ SKIP', `user_match:SKIP:${activeSession.id}`)
-            .text('⏹ STOP', `user_match:END:${activeSession.id}`),
-        }
-      );
-      return;
-    }
-
-    const inQueue = db.prepare('SELECT entered_at FROM stranger_queue WHERE user_id = ?').get(user.id) as { entered_at: string } | undefined;
-    if (inQueue) {
-      const elapsed = Math.max(0, Math.floor((Date.now() - new Date(inQueue.entered_at).getTime()) / 1000));
-      await ctx.reply(
-        `Status:\n🟡 *SEARCHING*\n\n` +
-        `Menunggu pasangan stranger Semarang online (${elapsed} detik).`,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: new InlineKeyboard().text('⏹ Stop Searching', 'user_match:LEAVE_QUEUE'),
-        }
-      );
-      return;
+    let keyboard = new InlineKeyboard();
+    if (statusInfo.isSearching) {
+      keyboard.text('⏹ Batal Cari', 'cmd_stop_match');
+    } else if (statusInfo.isChatting) {
+      keyboard.text('🛑 Akhiri Chat', 'cmd_stop_match');
+    } else {
+      keyboard.text('🔎 Cari Match', 'user_match_start').text('👤 Profil', 'cmd_my_account');
     }
 
     await ctx.reply(
-      `Status:\n⚪ *IDLE*\n\n` +
-      `Anda tidak sedang dalam antrean atau sesi obrolan aktif.`,
+      `📊 *Status NIVA Anda*\n\n` +
+      `Status: *${statusInfo.state}*\n\n` +
+      `${statusInfo.description}`,
       {
         parse_mode: 'Markdown',
-        reply_markup: new InlineKeyboard().text('🎥 Cari Stranger', 'user_match_start'),
+        reply_markup: keyboard,
       }
     );
   };
   bot.command('status', handleStatusMatch);
   bot.callbackQuery('cmd_match_status', handleStatusMatch);
+  bot.callbackQuery('cmd_stop_match', handleStopMatch);
 
   // ── /premium command & callback ───────────────────────────────────────────
   const handlePremiumFlow = async (ctx: any) => {
@@ -473,10 +462,10 @@ export function createBot(): Bot<MyContext> {
     ctx.session.activeTicketId = ticket.id;
 
     await ctx.reply(
-      `🎫 *Premium Support*\n\n` +
-      `Silakan jelaskan kebutuhan Anda.\n` +
-      `Pesan berikutnya akan dibuat menjadi ticket.\n\n` +
-      `Ticket ID:\n\`${ticket.id}\`\n\n` +
+      `🎫 *Pusat Bantuan Resmi NIVA*\n\n` +
+      `Silakan jelaskan kendala atau kebutuhan Anda.\n` +
+      `Pesan berikutnya akan langsung dicatat ke dalam sistem tiket NIVA.\n\n` +
+      `Ticket ID: \`${ticket.id}\`\n` +
       `Status: *${ticket.status}*\n` +
       `Posisi Antrean: *#${queuePos || 1}*\n\n` +
       `_Ketik pesan Anda langsung di obrolan ini:_`,
@@ -516,19 +505,21 @@ export function createBot(): Bot<MyContext> {
     await ctx.reply(
       `👤 *PROFIL PENGGUNA NIVA*\n\n` +
       `Nama: *${displayName}*\n` +
-      `User ID: \`${user.id}\`\n` +
-      `Telegram ID: \`${telegramId}\`\n` +
+      `Bio: *${profile?.bio || 'Belum diisi'}*\n` +
+      `Jurusan: *${profile?.study_field || 'Umum'}*\n` +
+      `Area: *${profile?.coarse_area || 'Semarang'}*\n` +
+      `Status Bot: *${user.bot_state || 'READY'}*\n` +
       `Status Akun: *${user.status}*\n` +
       `Verifikasi: *${verifStatus}*\n` +
       `Langganan: *${subStatus}*\n` +
       (sub ? `Aktif Sampai: *${new Date(sub.ends_at).toLocaleDateString('id-ID')}*\n` : '') +
       `Age Gate: *${user.is_18_plus ? '✅ 18+ (Terkonfirmasi)' : '⚠️ Belum Konfirmasi'}*\n\n` +
-      `_Akun terhubung resmi dengan sistem NIVA._`,
+      `_Ketik /edit untuk mengubah biodata profil Anda._`,
       {
         parse_mode: 'Markdown',
         reply_markup: new InlineKeyboard()
-          .text('🎥 Cari Stranger', 'user_match_start')
-          .text('💎 Beli Premium', 'cmd_niva_premium')
+          .text('✏️ Edit Profil', 'cmd_edit_profile')
+          .text('🔎 Cari Match', 'user_match_start')
           .row()
           .text('🎫 Tiket Bantuan', 'cmd_open_ticket')
           .text('🏠 Menu Utama', 'cmd_main_menu'),
@@ -538,36 +529,58 @@ export function createBot(): Bot<MyContext> {
   bot.command('profile', handleProfileCommand);
   bot.callbackQuery('cmd_my_account', handleProfileCommand);
 
+  // ── /edit command & callback ──────────────────────────────────────────────
+  const handleEditProfileCommand = async (ctx: any) => {
+    await ctx.reply(
+      `✏️ *Edit Profil NIVA*\n\n` +
+      `Pilih bagian profil yang ingin kamu perbarui:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('📝 Ubah Bio', 'edit_bio')
+          .text('🎓 Ubah Jurusan', 'edit_major')
+          .row()
+          .text('📍 Ubah Area', 'edit_area')
+          .text('📸 Ubah Foto', 'upload_profile_photo')
+          .row()
+          .text('🔙 Kembali ke Profil', 'cmd_my_account'),
+      }
+    );
+  };
+  bot.command('edit', handleEditProfileCommand);
+  bot.callbackQuery('cmd_edit_profile', handleEditProfileCommand);
+
   // ── /report command ───────────────────────────────────────────────────────
   bot.command('report', async (ctx) => {
     const telegramId = ctx.from?.id.toString() || '';
     const user = OnboardingHandler.getOrCreateUser(telegramId);
 
-    const activeSession = StrangerCamService.getActiveSessionForUser(user.id);
-    if (!activeSession) {
+    const active = BotMatchmakingService.getActiveSession(user.id);
+    if (!active.session) {
       await ctx.reply(
-        `⚠️ Anda sedang tidak memiliki sesi Stranger Cam aktif untuk dilaporkan.\n\n` +
-        `Jika ingin melaporkan akun atau kendala lain, silakan gunakan perintah /ticket.`
+        `⚠️ Kamu sedang tidak berada dalam sesi chat aktif untuk dilaporkan.\n\n` +
+        `Jika ingin melaporkan akun atau kendala lain, silakan gunakan perintah /support.`
       );
       return;
     }
 
+    const sessionId = active.session.id;
     await ctx.reply(
       `🚨 *Laporkan Pengguna Sesi Ini*\n\n` +
-      `Session ID: \`${activeSession.id}\`\n\n` +
-      `Pilih kategori pelanggaran di bawah. Sesi obrolan akan otomatis dihentikan demi keselamatan Anda:`,
+      `Session ID: \`${sessionId}\`\n\n` +
+      `Pilih kategori pelanggaran di bawah. Sesi chat akan otomatis dihentikan dan pengguna diblokir demi kenyamanan Anda:`,
       {
         parse_mode: 'Markdown',
         reply_markup: new InlineKeyboard()
-          .text('🔞 Konten Vulgar / Nudity', `user_report:NUDITY:${activeSession.id}`)
+          .text('🔞 Konten Vulgar / Nudity', `bot_report:NUDITY:${sessionId}`)
           .row()
-          .text('🤬 Pelecehan / Harassment', `user_report:HARASSMENT:${activeSession.id}`)
+          .text('🤬 Pelecehan / Harassment', `bot_report:HARASSMENT:${sessionId}`)
           .row()
-          .text('💰 Penipuan / Scam', `user_report:SCAM:${activeSession.id}`)
+          .text('💰 Penipuan / Scam', `bot_report:SCAM:${sessionId}`)
           .row()
-          .text('👶 Indikasi Bawah Umur', `user_report:UNDERAGE_CONCERN:${activeSession.id}`)
+          .text('👶 Indikasi Bawah Umur', `bot_report:UNDERAGE_CONCERN:${sessionId}`)
           .row()
-          .text('⚠️ Perilaku Tidak Pantas', `user_report:INAPPROPRIATE_BEHAVIOR:${activeSession.id}`),
+          .text('⚠️ Perilaku Tidak Pantas', `bot_report:INAPPROPRIATE_BEHAVIOR:${sessionId}`),
       }
     );
   });
@@ -577,48 +590,57 @@ export function createBot(): Bot<MyContext> {
     const telegramId = ctx.from?.id.toString() || '';
     const user = OnboardingHandler.getOrCreateUser(telegramId);
 
-    const activeSession = StrangerCamService.getActiveSessionForUser(user.id);
-    if (!activeSession) {
-      await ctx.reply('⚠️ Anda tidak sedang dalam sesi obrolan aktif.');
+    const active = BotMatchmakingService.getActiveSession(user.id);
+    if (!active.session || !active.partnerUserId) {
+      await ctx.reply('⚠️ Kamu tidak sedang berada dalam sesi chat aktif.');
       return;
     }
 
-    const partnerId = activeSession.user_a_id === user.id ? activeSession.user_b_id : activeSession.user_a_id;
-    ModerationService.blockUser(user.id, partnerId, 'Blocked via Telegram /block command');
-    StrangerCamService.endSession(activeSession.id, user.id, 'BLOCKED');
+    ModerationService.blockUser(user.id, active.partnerUserId, 'Blocked via Telegram /block command');
+    BotMatchmakingService.stop(user.id, 'BLOCKED');
 
-    await ctx.reply('🚫 *Pengguna telah diblokir.* Sesi obrolan dihentikan.');
+    await ctx.reply('🚫 *Pengguna telah diblokir.* Sesi chat dihentikan.');
+
+    if (active.partnerTelegramId) {
+      try {
+        await ctx.api.sendMessage(
+          parseInt(active.partnerTelegramId),
+          '🛑 Sesi chat telah diakhiri.',
+          { parse_mode: 'Markdown' }
+        );
+      } catch {}
+    }
   });
 
   // ── /help command & callback ──────────────────────────────────────────────
   const handleHelpCommand = async (ctx: any) => {
     await ctx.reply(
-      `📖 *PANDUAN PENGGUNAAN NIVA*\n\n` +
-      `*1. Stranger Cam 1-on-1*\n` +
-      `Ketik /match untuk mencari video conversation dengan pengguna Semarang lain secara instan. ` +
-      `Gunakan /status untuk memantau durasi, atau /stop untuk mengakhiri.\n\n` +
-      `*2. Privasi & Keamanan*\n` +
-      `Lokasi GPS presisi dan identitas asli tidak pernah dibagikan ke partner. ` +
-      `Gunakan tombol Block atau Report seketika jika terjadi pelanggaran etika.\n\n` +
-      `*3. NIVA Premium*\n` +
-      `Ketik /premium untuk membuka fitur eksklusif, batas like lebih tinggi, dan prioritas antrean.\n\n` +
-      `*4. Dukungan Admin*\n` +
-      `Ketik /ticket untuk mengirimkan pesan ke tim admin NIVA.\n\n` +
+      `📖 *PANDUAN LENGKAP NIVA BOT*\n\n` +
+      `*1. Matchmaking 1-on-1 (20 Menit)*\n` +
+      `Ketik /match untuk mencari teman mengobrol Semarang secara instan. ` +
+      `Setelah match ditemukan, seluruh pesan teks langsung diteruskan lewat bot selama 20 menit.\n\n` +
+      `*2. Privasi Terjaga*\n` +
+      `Identitas Telegram kamu dirahasiakan sepenuhnya. Tidak ada kebocoran pesan antar sesi.\n\n` +
+      `*3. Mengakhiri Sesi*\n` +
+      `Ketik /stop kapan saja untuk mengakhiri obrolan atau membatalkan antrean pencarian.\n\n` +
+      `*4. Keamanan & Laporan*\n` +
+      `Ketik /report untuk melaporkan partner chat yang melanggar etika atau /block untuk memblokir.\n\n` +
       `*Daftar Perintah Resmi:*\n` +
-      `/menu - Menu utama NIVA\n` +
-      `/match - Mulai cari stranger\n` +
-      `/status - Status obrolan saat ini\n` +
-      `/stop - Hentikan sesi obrolan\n` +
-      `/premium - Informasi paket premium\n` +
-      `/ticket - Buka tiket bantuan\n` +
-      `/profile - Informasi akun\n` +
-      `/report - Laporkan pelanggaran\n` +
-      `/block - Blokir pengguna\n` +
-      `/help - Panduan penggunaan`,
+      `/start - Mulai atau sambungkan akun NIVA\n` +
+      `/match - Cari teman mengobrol baru (20 menit)\n` +
+      `/stop - Hentikan sesi chat atau antrean\n` +
+      `/status - Cek status akun & sisa waktu chat\n` +
+      `/profile - Lihat kartu profil & info akun\n` +
+      `/edit - Edit bio, jurusan, dan area\n` +
+      `/report - Laporkan pelanggaran lawan bicara\n` +
+      `/block - Blokir pengguna sesi saat ini\n` +
+      `/premium - Informasi dan aktivasi NIVA Premium\n` +
+      `/support - Buat tiket bantuan admin resmi\n` +
+      `/help - Buka panduan ini`,
       {
         parse_mode: 'Markdown',
         reply_markup: new InlineKeyboard()
-          .text('🎥 Cari Stranger', 'user_match_start')
+          .text('🔎 Cari Match Sekarang', 'user_match_start')
           .text('🏠 Menu Utama', 'cmd_main_menu'),
       }
     );
@@ -738,6 +760,43 @@ export function createBot(): Bot<MyContext> {
       await ctx.reply('⚠️ *Laporan diterima.* Pengguna telah diblokir dan sesi dihentikan.');
     } catch (err: any) {
       await ctx.reply(`❌ Gagal melaporkan: ${err.message}`);
+    }
+  });
+
+  bot.callbackQuery(/bot_report:(.+):(.+)/, async (ctx) => {
+    const reason = ctx.match[1] as any;
+    const sessionId = ctx.match[2];
+    const telegramId = ctx.from.id.toString();
+    const user = OnboardingHandler.getOrCreateUser(telegramId);
+    const db = getDatabase();
+
+    const session = db.prepare('SELECT * FROM match_sessions WHERE id = ?').get(sessionId) as any;
+    if (!session) {
+      await ctx.reply('⚠️ Sesi obrolan tidak ditemukan atau telah berakhir.');
+      return;
+    }
+
+    const partnerId = session.user_a_id === user.id ? session.user_b_id : session.user_a_id;
+    try {
+      ModerationService.createReport({
+        reporterUserId: user.id,
+        reportedUserId: partnerId,
+        category: reason,
+        evidenceText: `Reported during 20-min chat session: ${sessionId}`,
+      });
+      ModerationService.blockUser(user.id, partnerId, `Blocked via /report (${reason})`);
+      BotMatchmakingService.stop(user.id, 'REPORTED');
+
+      await ctx.reply('🚨 *Laporan Berhasil Diterima.*\n\nPengguna telah otomatis diblokir dan sesi chat 20 menit telah dihentikan. Tim Trust & Safety NIVA akan meninjau laporan ini.');
+
+      const partnerUser = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(partnerId) as { telegram_id: string } | undefined;
+      if (partnerUser) {
+        try {
+          await ctx.api.sendMessage(parseInt(partnerUser.telegram_id), '🛑 Sesi chat telah dihentikan.');
+        } catch {}
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ Gagal memproses laporan: ${err.message}`);
     }
   });
 
@@ -1344,6 +1403,7 @@ export function createBot(): Bot<MyContext> {
 
       // Record Onboarding Completion for real cumulative growth counter (Section 2 & 3)
       StatisticsService.recordOnboardingCompletion(user.id);
+      BotMatchmakingService.setUserState(user.id, 'READY');
 
       ctx.session.step = 'IDLE';
       const savedProfile = db.prepare(`
@@ -1361,6 +1421,45 @@ export function createBot(): Bot<MyContext> {
           reply_markup: ProfileHandler.getProfileKeyboard(),
         }
       );
+      return;
+    }
+
+    if (ctx.session.step === 'AWAITING_PROFILE_AREA') {
+      const area = text.slice(0, 40);
+      db.prepare("UPDATE profiles SET coarse_area = ?, updated_at = datetime('now') WHERE user_id = ?").run(area, user.id);
+      ctx.session.step = 'IDLE';
+      await ctx.reply(`✅ Area domisili berhasil diubah menjadi: *${area}*`, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // ── 20-Minute Isolated Chat Message Relay ───────────────────────────────
+    // When idle and user sends a normal text message, check for active 20-min match session
+    const active = BotMatchmakingService.getActiveSession(user.id);
+    if (active.hasExpired) {
+      await ctx.reply(
+        `⏰ *Sesi chat 20 menit kamu telah berakhir.*\n\n` +
+        `Terima kasih telah mengobrol secara sopan dan beretika.\n\n` +
+        `🔎 *Cari Match Baru?* Ketik /match untuk mencari teman mengobrol baru.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: new InlineKeyboard().text('🔎 Cari Match Lagi', 'user_match_start'),
+        }
+      );
+      return;
+    }
+
+    if (active.session && active.partnerUserId && active.partnerTelegramId) {
+      try {
+        const relay = BotMatchmakingService.relayMessage(user.id, text);
+        // Deliver to partner's Telegram account safely
+        await ctx.api.sendMessage(
+          parseInt(relay.receiverTelegramId),
+          `💬 *Pesan dari Match:*\n\n${text}`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (err: any) {
+        await ctx.reply(`❌ Gagal mengirim pesan: ${err.message || 'Partner sedang tidak dapat dihubungi.'}`);
+      }
       return;
     }
   });
@@ -1798,7 +1897,7 @@ export function createBot(): Bot<MyContext> {
     ctx.session.step = 'AWAITING_PROFILE_PHOTO';
     await ctx.reply(
       `📸 *Unggah Foto Profil Asli Anda*\n\n` +
-      `SULA menerapkan moderasi keamanan foto ketat demi menjaga komunitas mahasiswa yang bersih dan berintegritas:\n\n` +
+      `NIVA menerapkan moderasi keamanan foto ketat demi menjaga komunitas mahasiswa yang bersih dan berintegritas:\n\n` +
       `✅ *Ketentuan Foto:*\n` +
       `• Foto asli diri sendiri dengan wajah terlihat jelas.\n` +
       `• Berpakaian sopan dan pantas.\n\n` +
@@ -1806,6 +1905,35 @@ export function createBot(): Bot<MyContext> {
       `• Foto vulgar, sensual, nude, atau berunsur pornografi/NSFW (sistem otomatis menolak & memberi sanksi).\n` +
       `• Foto orang lain tanpa izin / gambar kartun / meme palsu.\n\n` +
       `_Silakan kirimkan foto profil Anda sekarang (sebagai Foto di Telegram):_`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // Profile Edit Callbacks
+  bot.callbackQuery('edit_bio', async (ctx) => {
+    ctx.session.step = 'AWAITING_PROFILE_BIO';
+    await ctx.reply(
+      `📝 *Ubah Bio Profil*\n\n` +
+      `Silakan ketikkan bio baru Anda (maksimal 200 karakter).\n` +
+      `_Jangan menyertakan nomor HP atau link medsos demi keamanan privasi Anda._`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.callbackQuery('edit_major', async (ctx) => {
+    ctx.session.step = 'AWAITING_PROFILE_MAJOR';
+    await ctx.reply(
+      `🎓 *Ubah Jurusan / Program Studi*\n\n` +
+      `Silakan ketikkan program studi atau jurusan Anda saat ini:`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.callbackQuery('edit_area', async (ctx) => {
+    ctx.session.step = 'AWAITING_PROFILE_AREA';
+    await ctx.reply(
+      `📍 *Ubah Area Domisili*\n\n` +
+      `Silakan ketikkan area atau kawasan tempat tinggal Anda di Semarang (misal: Tembalang, Pleburan, Banyumanik, dll):`,
       { parse_mode: 'Markdown' }
     );
   });

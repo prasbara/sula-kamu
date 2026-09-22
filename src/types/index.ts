@@ -48,6 +48,12 @@ export interface User {
   birth_date: string | null;
   risk_score: number;
   onboarding_completed_at?: string | null;
+  bot_state?: 'NEW' | 'ONBOARDING' | 'READY' | 'SEARCHING' | 'MATCHED' | 'CHATTING' | 'COMPLETED' | 'COOLDOWN';
+  online_status?: 'ONLINE' | 'OFFLINE' | 'AWAY';
+  last_seen_at?: string | null;
+  active_session_id?: string | null;
+  telegram_username?: string | null;
+  telegram_display_name?: string | null;
   created_at: string;
   updated_at: string;
 }

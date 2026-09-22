@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS users (
     birth_date TEXT,
     risk_score INTEGER NOT NULL DEFAULT 0,
     onboarding_completed_at TEXT,
+    telegram_username TEXT,
+    telegram_display_name TEXT,
+    bot_state TEXT NOT NULL DEFAULT 'NEW',
+    online_status TEXT NOT NULL DEFAULT 'OFFLINE',
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    active_session_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -766,3 +772,62 @@ CREATE TABLE IF NOT EXISTS advertising_inquiries (
 );
 CREATE INDEX IF NOT EXISTS idx_ad_inquiries_status ON advertising_inquiries(status);
 CREATE INDEX IF NOT EXISTS idx_ad_inquiries_created ON advertising_inquiries(created_at DESC);
+
+-- 46. Matchmaking Queue (Atomic Server-Side Pairing)
+CREATE TABLE IF NOT EXISTS match_queue (
+    id TEXT PRIMARY KEY,
+    user_id TEXT UNIQUE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'SEARCHING' CHECK(status IN ('SEARCHING', 'MATCHED', 'CANCELLED')),
+    entered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_heartbeat TEXT NOT NULL DEFAULT (datetime('now')),
+    metadata TEXT,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_mq_status_time ON match_queue(status, entered_at);
+CREATE INDEX IF NOT EXISTS idx_mq_heartbeat ON match_queue(last_heartbeat);
+
+-- 47. Match Sessions (20-Minute Server-Side Chat Session)
+CREATE TABLE IF NOT EXISTS match_sessions (
+    id TEXT PRIMARY KEY,
+    user_a_id TEXT NOT NULL,
+    user_b_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'COMPLETED', 'USER_ENDED', 'OFFLINE_TIMEOUT', 'REPORTED', 'BLOCKED')),
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    ended_at TEXT,
+    ended_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_a_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_b_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ms_users ON match_sessions(user_a_id, user_b_id);
+CREATE INDEX IF NOT EXISTS idx_ms_status ON match_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_ms_expiry ON match_sessions(expires_at, status);
+
+-- 48. Match Session Messages (Isolated Message Delivery)
+CREATE TABLE IF NOT EXISTS match_session_messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    sender_user_id TEXT NOT NULL,
+    receiver_user_id TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(session_id) REFERENCES match_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY(sender_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(receiver_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_msm_session ON match_session_messages(session_id, created_at);
+
+-- 49. Notification Queue (Outbox Pattern for Reliable Admin Notifications)
+CREATE TABLE IF NOT EXISTS notification_queue (
+    id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'SENT', 'FAILED', 'RETRY')),
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_nq_status ON notification_queue(status, created_at);
