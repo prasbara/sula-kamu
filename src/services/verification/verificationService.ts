@@ -7,6 +7,7 @@ import { Institution, StudentVerification, User } from '../../types/index';
 import { ImageSanitizer, SanitizedImage } from './imageSanitizer';
 import { OCRAnalyzer, OCRAnalysisResult } from './ocrAnalyzer';
 import { AiKtmValidator, AiKtmValidationResult } from './aiKtmValidator';
+import { ModerationService } from '../safety/moderationService';
 
 export interface VerificationSubmissionResult {
   success: boolean;
@@ -348,6 +349,16 @@ export class VerificationService {
 
       db.prepare("UPDATE users SET verification_status = 'VERIFICATION_REJECTED', updated_at = datetime('now') WHERE id = ?").run(verif.user_id);
     }
+
+    // Write to immutable privileged audit log
+    ModerationService.logAudit({
+      actorId: reviewerId,
+      actorRole: 'VERIFICATION_ADMIN',
+      action: `KTM_${action}`,
+      targetResource: 'student_verifications',
+      targetId: verificationId,
+      details: `KTM verification for user ${verif.user_id} was ${action}. Reason: ${reason || '-'}`,
+    });
 
     // Purge temporary physical review file per data minimization & retention policy (Section 5)
     try {

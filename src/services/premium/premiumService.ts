@@ -3,6 +3,8 @@ import { getDatabase } from '../../database/db';
 import { ImageSanitizer } from '../verification/imageSanitizer';
 import { SupportService } from '../support/supportService';
 import { NotifyService } from '../notification/notifyService';
+import { ModerationService } from '../safety/moderationService';
+import { IdentityService } from '../identity/identityService';
 
 export interface PremiumPlan {
   id: string;
@@ -359,16 +361,25 @@ Halo! Pesanan NIVA Premium Anda telah diterima. Admin NIVA akan segera mengirimk
     try {
       db.prepare(`
         UPDATE users 
-        SET subscription_status = 'PREMIUM'
+        SET subscription_status = 'PREMIUM_ACTIVE', updated_at = datetime('now')
         WHERE id = ?
       `).run(order.user_id);
     } catch {}
 
-    // 5. Log verification action
+    // 5. Log verification action and immutable audit trail
     db.prepare(`
       INSERT INTO payment_verification_logs (id, order_id, admin_id, action, notes, created_at)
       VALUES (?, ?, ?, 'APPROVED', ?, datetime('now'))
     `).run(`log_${crypto.randomUUID()}`, order.id, params.adminId, params.adminNotes || 'Payment verified and approved.');
+
+    ModerationService.logAudit({
+      actorId: params.adminId,
+      actorRole: 'PAYMENT_ADMIN',
+      action: 'PREMIUM_APPROVED',
+      targetResource: 'premium_orders',
+      targetId: order.id,
+      details: `Approved order ${params.publicOrderId} for user ${order.user_id}. Plan: ${plan.name}. Notes: ${params.adminNotes || '-'}`,
+    });
 
     const subscription = db.prepare('SELECT * FROM premium_subscriptions WHERE id = ?').get(subId) as unknown as PremiumSubscription;
 
@@ -431,6 +442,15 @@ Halo! Pesanan NIVA Premium Anda telah diterima. Admin NIVA akan segera mengirimk
       INSERT INTO payment_verification_logs (id, order_id, admin_id, action, notes, created_at)
       VALUES (?, ?, ?, 'REJECTED', ?, datetime('now'))
     `).run(`log_${crypto.randomUUID()}`, order.id, params.adminId, `Rejected: ${params.rejectionReason.trim()}`);
+
+    ModerationService.logAudit({
+      actorId: params.adminId,
+      actorRole: 'PAYMENT_ADMIN',
+      action: 'PREMIUM_REJECTED',
+      targetResource: 'premium_orders',
+      targetId: order.id,
+      details: `Rejected order ${params.publicOrderId} for user ${order.user_id}. Reason: ${params.rejectionReason.trim()}`,
+    });
 
     // Notify user in ticket
     try {

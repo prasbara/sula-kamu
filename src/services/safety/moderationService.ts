@@ -8,6 +8,7 @@ export interface CreateReportInput {
   category: ReportCategory;
   evidenceText?: string;
   evidenceMediaId?: string;
+  reportedUsernameAtTime?: string;
 }
 
 export class ModerationService {
@@ -26,8 +27,8 @@ export class ModerationService {
     db.prepare(`
       INSERT INTO reports (
         id, report_code, reporter_id, reported_id, category,
-        evidence_text, evidence_media_id, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')
+        evidence_text, evidence_media_id, status, reported_username_at_time
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
     `).run(
       reportId,
       reportCode,
@@ -35,7 +36,8 @@ export class ModerationService {
       input.reportedUserId,
       input.category,
       input.evidenceText || null,
-      input.evidenceMediaId || null
+      input.evidenceMediaId || null,
+      input.reportedUsernameAtTime || null
     );
 
     // Auto-block the reported user for immediate safety
@@ -77,6 +79,98 @@ export class ModerationService {
   }
 
   /**
+   * Get reports with rich identity resolution (Historical username vs Current username)
+   */
+  public static getReportsWithDetails(status?: string, category?: string, search?: string): any[] {
+    const db = getDatabase();
+    let sql = `
+      SELECT 
+        r.id,
+        r.report_code,
+        r.category,
+        r.evidence_text,
+        r.evidence_media_id,
+        r.status,
+        r.assigned_moderator_id,
+        r.moderator_notes,
+        r.resolution_action,
+        r.created_at,
+        r.updated_at,
+        r.reported_username_at_time,
+        -- Reporter details
+        r.reporter_id,
+        rp.display_name as reporter_display_name,
+        ru.telegram_id as reporter_telegram_id,
+        -- Reported user details
+        r.reported_id as reported_user_id,
+        u.telegram_id as reported_telegram_id,
+        u.telegram_username as reported_current_username,
+        u.telegram_display_name as reported_current_display_name,
+        u.status as reported_account_status,
+        u.verification_status as reported_verification_status,
+        u.subscription_status as reported_subscription_status,
+        p.display_name as reported_profile_name,
+        (SELECT COUNT(*) FROM reports WHERE reported_id = r.reported_id) as reported_total_reports_count
+      FROM reports r
+      LEFT JOIN users ru ON ru.id = r.reporter_id
+      LEFT JOIN profiles rp ON rp.user_id = r.reporter_id
+      LEFT JOIN users u ON u.id = r.reported_id
+      LEFT JOIN profiles p ON p.user_id = r.reported_id
+      WHERE 1=1
+    `;
+
+    const params: any[] = [];
+
+    if (status && status !== 'ALL') {
+      sql += ' AND r.status = ? ';
+      params.push(status);
+    }
+
+    if (category && category !== 'ALL') {
+      sql += ' AND r.category = ? ';
+      params.push(category);
+    }
+
+    if (search && search.trim()) {
+      const q = `%${search.trim().replace(/^@/, '')}%`;
+      sql += ` AND (
+        r.report_code LIKE ? OR 
+        r.reported_id LIKE ? OR 
+        u.telegram_id LIKE ? OR 
+        u.telegram_username LIKE ? OR 
+        r.reported_username_at_time LIKE ? OR 
+        p.display_name LIKE ?
+      )`;
+      params.push(q, q, q, q, q, q);
+    }
+
+    sql += ' ORDER BY r.created_at DESC ';
+
+    const rows = db.prepare(sql).all(...params) as any[];
+
+    // Enrich with historical usernames from telegram_identity_history
+    return rows.map((row) => {
+      const historyRows = db.prepare(`
+        SELECT previous_username, new_username, detected_at
+        FROM telegram_identity_history
+        WHERE user_id = ?
+        ORDER BY detected_at DESC
+      `).all(row.reported_user_id) as any[];
+
+      const historicalUsernames = Array.from(new Set(
+        historyRows
+          .flatMap((h) => [h.previous_username, h.new_username])
+          .filter((un) => un && un !== row.reported_current_username)
+      ));
+
+      return {
+        ...row,
+        historical_usernames: historicalUsernames,
+      };
+    });
+  }
+
+  /**
    * Moderator action on a report: WARN, SUSPEND, BAN, DISMISS
    */
   public static resolveReport(
@@ -89,6 +183,7 @@ export class ModerationService {
     const report = db.prepare('SELECT * FROM reports WHERE id = ?').get(reportId) as Report | undefined;
     if (!report) throw new Error('Report not found');
 
+    const previousStatus = report.status;
     let newStatus: ReportStatus = action === 'DISMISS' ? 'DISMISSED' : 'RESOLVED';
 
     db.prepare(`
@@ -113,7 +208,7 @@ export class ModerationService {
       action: `RESOLVE_REPORT_${action}`,
       targetResource: 'reports',
       targetId: reportId,
-      details: `Report ${report.report_code} resolved with ${action}. Notes: ${notes}`,
+      details: `Report ${report.report_code} on user ${report.reported_id} transitioned from ${previousStatus} to ${newStatus} via ${action}. Notes: ${notes}`,
     });
   }
 

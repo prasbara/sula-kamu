@@ -442,9 +442,9 @@ export class SupportService {
   }
 
   /**
-   * FIFO Support Queue for Admin (Section 16 & 17: Oldest eligible ticket first)
+   * FIFO Support Queue for Admin (Section 16 & 17: Oldest eligible ticket first with Security Prioritization)
    */
-  public static getSupportQueue(statusFilter?: string, categoryFilter?: string): any[] {
+  public static getSupportQueue(statusFilter?: string, categoryFilter?: string, searchQuery?: string): any[] {
     const db = getDatabase();
     let query = `
       SELECT 
@@ -465,7 +465,9 @@ export class SupportService {
         u.verification_status,
         u.subscription_status,
         (SELECT body FROM support_messages WHERE ticket_id = st.id AND is_internal = 0 ORDER BY created_at DESC LIMIT 1) as last_message,
-        (SELECT created_at FROM support_messages WHERE ticket_id = st.id ORDER BY created_at DESC LIMIT 1) as last_message_at
+        (SELECT created_at FROM support_messages WHERE ticket_id = st.id ORDER BY created_at DESC LIMIT 1) as last_message_at,
+        (SELECT COUNT(*) FROM support_messages WHERE ticket_id = st.id) as message_count,
+        (SELECT created_at FROM support_messages WHERE ticket_id = st.id AND sender_type = 'ADMIN' ORDER BY created_at DESC LIMIT 1) as last_admin_response_at
       FROM support_tickets st
       JOIN users u ON u.id = st.user_id
       LEFT JOIN profiles p ON p.user_id = st.user_id
@@ -473,20 +475,32 @@ export class SupportService {
       WHERE 1=1
     `;
 
+    const params: any[] = [];
+
     if (statusFilter && statusFilter !== 'ALL') {
-      query += ` AND st.status = '${statusFilter}' `;
-    } else {
-      query += ` AND st.status != 'CLOSED' `;
+      if (statusFilter === 'WAITING_USER' || statusFilter === 'WAITING_FOR_USER') {
+        query += ` AND st.status IN ('WAITING', 'WAITING_FOR_USER') `;
+      } else {
+        query += ` AND st.status = ? `;
+        params.push(statusFilter);
+      }
     }
 
     if (categoryFilter && categoryFilter !== 'ALL') {
-      query += ` AND st.category = '${categoryFilter}' `;
+      query += ` AND st.category = ? `;
+      params.push(categoryFilter);
     }
 
-    // Strict FIFO: Oldest ticket first
-    query += ` ORDER BY st.created_at ASC `;
+    if (searchQuery && searchQuery.trim()) {
+      const q = `%${searchQuery.trim()}%`;
+      query += ` AND (st.id LIKE ? OR st.subject LIKE ? OR st.contact_name LIKE ? OR p.display_name LIKE ?) `;
+      params.push(q, q, q, q);
+    }
 
-    return db.prepare(query).all();
+    // Strict FIFO ordering with security/urgent elevation (Requirement 6: FIFO + Security Priority)
+    query += ` ORDER BY (CASE WHEN st.priority = 'URGENT' THEN 0 WHEN st.category = 'SAFETY_REPORT' THEN 1 ELSE 2 END) ASC, st.created_at ASC `;
+
+    return db.prepare(query).all(...params);
   }
 
   /**
@@ -506,7 +520,7 @@ export class SupportService {
 
     db.prepare(`
       UPDATE support_tickets 
-      SET status = ?, assigned_admin_id = ?, internal_notes = coalesce(?, internal_notes), closed_at = ?, updated_at = datetime('now')
+      SET status = ?, assigned_admin_id = coalesce(?, assigned_admin_id), internal_notes = coalesce(?, internal_notes), closed_at = ?, updated_at = datetime('now')
       WHERE id = ?
     `).run(newStatus, adminId, notes || null, closedAt, ticketId);
 
@@ -523,11 +537,67 @@ export class SupportService {
     if (newStatus === 'IN_PROGRESS') {
       NotifyService.sendUserMessage(
         ticket.user_id,
-        `⏳ *Tiket ${ticketId}:* Admin NIVA sedang meninjau tiket bantuan Premium Anda.`
+        `⏳ *Tiket ${ticketId}:* Admin NIVA sedang meninjau tiket bantuan Anda.`
       ).catch(() => {});
     } else if (newStatus === 'RESOLVED') {
       NotifyService.notifyUserTicketResolved(ticket.user_id, ticketId).catch(() => {});
     }
+  }
+
+  /**
+   * Update ticket priority (Admin action)
+   */
+  public static updateTicketPriority(
+    ticketId: string,
+    newPriority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT',
+    adminId: string
+  ): void {
+    const db = getDatabase();
+    const ticket = db.prepare('SELECT * FROM support_tickets WHERE id = ?').get(ticketId) as SupportTicket | undefined;
+    if (!ticket) throw new Error('TICKET_NOT_FOUND: Tiket tidak ditemukan.');
+
+    db.prepare(`
+      UPDATE support_tickets 
+      SET priority = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(newPriority, ticketId);
+
+    ModerationService.logAudit({
+      actorId: adminId,
+      actorRole: 'SUPPORT_ADMIN',
+      action: 'SUPPORT_PRIORITY_CHANGED',
+      targetResource: 'support_tickets',
+      targetId: ticketId,
+      details: `Changed priority of ticket ${ticketId} from ${ticket.priority} to ${newPriority}`,
+    });
+  }
+
+  /**
+   * Assign ticket to admin
+   */
+  public static assignTicket(
+    ticketId: string,
+    targetAdminId: string,
+    actorAdminId: string
+  ): void {
+    const db = getDatabase();
+    const ticket = db.prepare('SELECT * FROM support_tickets WHERE id = ?').get(ticketId) as SupportTicket | undefined;
+    if (!ticket) throw new Error('TICKET_NOT_FOUND: Tiket tidak ditemukan.');
+
+    db.prepare(`
+      UPDATE support_tickets 
+      SET assigned_admin_id = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(targetAdminId, ticketId);
+
+    ModerationService.logAudit({
+      actorId: actorAdminId,
+      actorRole: 'SUPPORT_ADMIN',
+      action: 'SUPPORT_TICKET_ASSIGNED',
+      targetResource: 'support_tickets',
+      targetId: ticketId,
+      details: `Ticket ${ticketId} assigned to admin ${targetAdminId}`,
+    });
   }
 
   /**

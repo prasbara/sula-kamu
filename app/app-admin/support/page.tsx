@@ -5,16 +5,14 @@ import {
   MessageSquare, 
   Clock, 
   Send, 
-  ShieldCheck, 
-  Sparkles, 
-  CreditCard, 
-  AlertTriangle,
-  Lock,
-  UserCheck,
-  Tag,
-  CheckCircle2,
-  XCircle,
-  Megaphone
+  Lock, 
+  CheckCircle2, 
+  AlertCircle, 
+  User, 
+  Search, 
+  ShieldAlert,
+  ArrowRight,
+  UserCheck
 } from 'lucide-react';
 
 export default function AdminSupportPage() {
@@ -25,11 +23,17 @@ export default function AdminSupportPage() {
   const [isInternal, setIsInternal] = useState(false);
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
 
   const fetchQueue = () => {
-    fetch(`/api/admin/support?status=${encodeURIComponent(statusFilter)}&category=${encodeURIComponent(categoryFilter)}`)
+    const params = new URLSearchParams();
+    if (statusFilter !== 'ALL') params.set('status', statusFilter);
+    if (categoryFilter !== 'ALL') params.set('category', categoryFilter);
+    if (searchQuery.trim()) params.set('q', searchQuery.trim());
+
+    fetch(`/api/admin/support?${params.toString()}`)
       .then((res) => res.json())
       .then((data) => {
         setQueue(data.queue || []);
@@ -91,6 +95,28 @@ export default function AdminSupportPage() {
     fetchQueue();
   };
 
+  const handlePriorityChange = async (newPriority: string) => {
+    if (!selectedTicketId) return;
+    await fetch(`/api/admin/support/${selectedTicketId}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priority: newPriority }),
+    });
+    fetchTicket(selectedTicketId);
+    fetchQueue();
+  };
+
+  const handleAssignToMe = async () => {
+    if (!selectedTicketId) return;
+    await fetch(`/api/admin/support/${selectedTicketId}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'IN_PROGRESS' }),
+    });
+    fetchTicket(selectedTicketId);
+    fetchQueue();
+  };
+
   const getCategoryBadge = (category: string) => {
     switch (category) {
       case 'PREMIUM':
@@ -118,10 +144,14 @@ export default function AdminSupportPage() {
         return 'bg-red-500/20 text-red-300 font-black border-red-500/40';
       case 'HIGH':
         return 'bg-amber-500/20 text-amber-300 font-bold border-amber-500/30';
+      case 'NORMAL':
+        return 'bg-sky-500/10 text-sky-300 border-sky-500/20';
       default:
         return 'bg-slate-500/10 text-slate-400 border-slate-500/20';
     }
   };
+
+  const isClosed = ticketDetails?.ticket?.status === 'CLOSED';
 
   return (
     <div className="space-y-6">
@@ -129,19 +159,19 @@ export default function AdminSupportPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-display font-bold text-white tracking-tight flex items-center gap-2">
-            <span>Pusat Bantuan & Tiket (FIFO)</span>
+            <span>Pusat Bantuan & Tiket (FIFO + Keamanan)</span>
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#5B3A6D]/40 text-[#E8B4C8] border border-[#5B3A6D]/60 font-mono">
-              Unified Support
+              Production Support
             </span>
           </h1>
           <p className="text-xs text-[#9D93A8] mt-1">
-            Layanan percakapan dua arah (Live Chat Support) antara pengguna (Premium & Umum) dan tim Admin NIVA secara berurutan.
+            Layanan live chat support resmi antara pengguna dan tim Admin NIVA secara terisolasi per tiket (FIFO berprioritas).
           </p>
         </div>
 
         {/* Status Filters */}
         <div className="flex items-center gap-1.5 text-xs overflow-x-auto pb-1">
-          {['ALL', 'OPEN', 'IN_REVIEW', 'WAITING_FOR_USER', 'RESOLVED', 'CLOSED'].map((s) => (
+          {['ALL', 'OPEN', 'IN_PROGRESS', 'WAITING_USER', 'RESOLVED', 'CLOSED'].map((s) => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
@@ -157,32 +187,58 @@ export default function AdminSupportPage() {
         </div>
       </div>
 
-      {/* Category Pills */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-        <span className="text-[11px] font-bold text-[#9D93A8] uppercase tracking-wider mr-1">Kategori:</span>
-        {[
-          { key: 'ALL', label: 'Semua Kategori' },
-          { key: 'PREMIUM', label: '⭐ Premium' },
-          { key: 'SAFETY_REPORT', label: '🛡️ Laporan Keamanan' },
-          { key: 'PAYMENT', label: '💳 Pembayaran' },
-          { key: 'ADVERTISING', label: '📢 Iklan & Kemitraan' },
-          { key: 'STUDENT_VERIFICATION', label: '🎓 Verifikasi KTM' },
-          { key: 'TECHNICAL', label: '🔧 Kendala Teknis' },
-          { key: 'DATA_DELETION', label: '🔒 Privasi & UU PDP' },
-          { key: 'GENERAL', label: 'Umum' },
-        ].map((c) => (
+      {/* Category Pills & Search Form */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+          <span className="text-[11px] font-bold text-[#9D93A8] uppercase tracking-wider mr-1">Kategori:</span>
+          {[
+            { key: 'ALL', label: 'Semua Kategori' },
+            { key: 'PREMIUM', label: '⭐ Premium' },
+            { key: 'SAFETY_REPORT', label: '🛡️ Keamanan' },
+            { key: 'PAYMENT', label: '💳 Pembayaran' },
+            { key: 'ADVERTISING', label: '📢 Kemitraan' },
+            { key: 'STUDENT_VERIFICATION', label: '🎓 KTM' },
+            { key: 'TECHNICAL', label: '🔧 Teknis' },
+            { key: 'GENERAL', label: 'Umum' },
+          ].map((c) => (
+            <button
+              key={c.key}
+              onClick={() => setCategoryFilter(c.key)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all whitespace-nowrap border ${
+                categoryFilter === c.key
+                  ? 'bg-white/15 text-white border-white/30'
+                  : 'bg-[#171420] text-[#9D93A8] hover:text-white border-[#2B2438]'
+              }`}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            fetchQueue();
+          }}
+          className="flex items-center gap-2"
+        >
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-[#9D93A8] absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Cari Ticket ID atau subjek..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8 pr-3 py-1.5 bg-[#171420] border border-[#2B2438] rounded-xl text-xs text-white placeholder-[#6E647D] focus:outline-none focus:border-[#8A5A9A] w-56"
+            />
+          </div>
           <button
-            key={c.key}
-            onClick={() => setCategoryFilter(c.key)}
-            className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all whitespace-nowrap border ${
-              categoryFilter === c.key
-                ? 'bg-white/15 text-white border-white/30'
-                : 'bg-[#171420] text-[#9D93A8] hover:text-white border-[#2B2438]'
-            }`}
+            type="submit"
+            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold"
           >
-            {c.label}
+            Cari
           </button>
-        ))}
+        </form>
       </div>
 
       {/* Two Column Layout */}
@@ -193,13 +249,13 @@ export default function AdminSupportPage() {
             <span className="text-[11px] font-bold uppercase tracking-wider text-[#9D93A8]">
               Antrean Tiket ({queue.length})
             </span>
-            <span className="text-[10px] text-emerald-400 font-medium">Urutan Kedatangan FIFO</span>
+            <span className="text-[10px] text-emerald-400 font-medium">FIFO Server-Side</span>
           </div>
 
           {isLoading ? (
-            <div className="py-12 text-center text-xs text-[#9D93A8]">Memuat antrean...</div>
+            <div className="py-12 text-center text-xs text-[#9D93A8]">Memuat antrean tiket...</div>
           ) : queue.length === 0 ? (
-            <div className="py-12 text-center text-xs text-[#9D93A8]">Tidak ada tiket pada filter ini.</div>
+            <div className="py-12 text-center text-xs text-[#9D93A8]">Tidak ada tiket pada kriteria ini.</div>
           ) : (
             <div className="space-y-2 max-h-[650px] overflow-y-auto pr-1">
               {queue.map((item, idx) => {
@@ -232,8 +288,11 @@ export default function AdminSupportPage() {
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getCategoryBadge(item.category || item.type)}`}>
                         {item.category || item.type}
                       </span>
-                      <span className="text-[11px] font-semibold text-white truncate max-w-[170px]">
+                      <span className="text-[11px] font-semibold text-white truncate max-w-[150px]">
                         {item.display_name}
+                      </span>
+                      <span className="text-[10px] text-[#7A7185] ml-auto">
+                        {item.message_count || 1} pesan
                       </span>
                     </div>
 
@@ -244,6 +303,13 @@ export default function AdminSupportPage() {
                     <div className="text-[11px] text-[#9D93A8] line-clamp-1 bg-black/20 p-1.5 rounded-lg border border-white/5">
                       {item.last_message || 'Belum ada percakapan'}
                     </div>
+
+                    <div className="flex items-center justify-between text-[10px] text-[#7A7185] pt-0.5">
+                      <span>Masuk: {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      {item.assigned_admin_id && (
+                        <span className="text-purple-300 font-mono">Assigned: {item.assigned_admin_id}</span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -251,11 +317,11 @@ export default function AdminSupportPage() {
           )}
         </div>
 
-        {/* Right Column: Active Conversation */}
+        {/* Right Column: Active Conversation Thread */}
         <div className="lg:col-span-8 bg-[#171420] border border-[#2B2438] rounded-2xl p-6 space-y-6">
           {!ticketDetails ? (
             <div className="py-24 text-center text-xs text-[#9D93A8]">
-              Pilih tiket dari antrean FIFO di samping kiri untuk membaca detail dan membalas pesan pengguna.
+              Pilih tiket dari antrean di samping kiri untuk membuka percakapan dan membalas satu per satu.
             </div>
           ) : (
             <>
@@ -270,26 +336,46 @@ export default function AdminSupportPage() {
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getCategoryBadge(ticketDetails.ticket.category || ticketDetails.ticket.type)}`}>
                         {ticketDetails.ticket.category || ticketDetails.ticket.type}
                       </span>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${getPriorityBadge(ticketDetails.ticket.priority)}`}>
-                        Prioritas: {ticketDetails.ticket.priority}
-                      </span>
+
+                      {/* Priority Selector Dropdown */}
+                      <select
+                        value={ticketDetails.ticket.priority}
+                        onChange={(e) => handlePriorityChange(e.target.value)}
+                        className="bg-black/40 border border-white/10 rounded px-2 py-0.5 text-[10px] font-bold text-white focus:outline-none"
+                      >
+                        <option value="LOW">Prioritas: LOW</option>
+                        <option value="NORMAL">Prioritas: NORMAL</option>
+                        <option value="HIGH">Prioritas: HIGH</option>
+                        <option value="URGENT">Prioritas: URGENT</option>
+                      </select>
+
                       <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300">
                         {ticketDetails.ticket.status}
                       </span>
-                      <span className="text-[10px] font-medium text-[#9D93A8]">
-                        Antrean: #{ticketDetails.queuePosition}
-                      </span>
                     </div>
+
                     <div className="text-sm font-semibold text-white mt-1">
                       {ticketDetails.ticket.subject}
                     </div>
-                    <div className="text-xs text-[#C8BED4] mt-0.5">
-                      Kontak: <span className="text-white font-medium">{ticketDetails.ticket.contact_name || ticketDetails.userProfile?.display_name || 'Pengguna NIVA'}</span>
+
+                    <div className="text-xs text-[#C8BED4] mt-0.5 flex items-center gap-2 flex-wrap">
+                      <span>
+                        Kontak: <strong className="text-white">{ticketDetails.ticket.contact_name || ticketDetails.userProfile?.display_name || 'Pengguna NIVA'}</strong>
+                      </span>
                       {ticketDetails.ticket.contact_email && (
-                        <span className="ml-2 text-[#9D93A8]">({ticketDetails.ticket.contact_email})</span>
+                        <span className="text-[#9D93A8]">({ticketDetails.ticket.contact_email})</span>
                       )}
-                      {ticketDetails.userProfile?.subscription_status === 'PREMIUM_ACTIVE' && (
-                        <span className="ml-2 text-amber-300 font-bold">⭐ Pelanggan Premium</span>
+                      {ticketDetails.ticket.assigned_admin_id ? (
+                        <span className="text-purple-300 font-mono">
+                          • Assigned: {ticketDetails.ticket.assigned_admin_id}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={handleAssignToMe}
+                          className="text-[10px] text-emerald-400 hover:underline font-semibold flex items-center gap-1"
+                        >
+                          <UserCheck className="w-3 h-3" /> Tangani Tiket Ini
+                        </button>
                       )}
                     </div>
                   </div>
@@ -297,28 +383,28 @@ export default function AdminSupportPage() {
                   {/* Status Switcher Buttons */}
                   <div className="flex items-center gap-1.5 text-xs flex-wrap">
                     <button
-                      onClick={() => handleStatusChange('IN_REVIEW')}
-                      className="px-2.5 py-1 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/20"
+                      onClick={() => handleStatusChange('IN_PROGRESS')}
+                      className="px-2.5 py-1 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/20 text-xs font-semibold"
                     >
-                      Proses
+                      In Progress
                     </button>
                     <button
                       onClick={() => handleStatusChange('WAITING_FOR_USER')}
-                      className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20"
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 text-xs font-semibold"
                     >
                       Menunggu User
                     </button>
                     <button
                       onClick={() => handleStatusChange('RESOLVED')}
-                      className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/20"
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/20 text-xs font-semibold"
                     >
-                      Selesai
+                      Resolved
                     </button>
                     <button
                       onClick={() => handleStatusChange('CLOSED')}
-                      className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20"
+                      className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 text-xs font-semibold"
                     >
-                      Tutup
+                      Tutup Tiket
                     </button>
                   </div>
                 </div>
@@ -346,7 +432,7 @@ export default function AdminSupportPage() {
                       <div key={m.id} className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">
                         <div className="text-[10px] font-bold text-amber-400 mb-1 flex items-center gap-1.5">
                           <Lock className="w-3 h-3" />
-                          <span>Catatan Internal Admin ({m.sender_name}) — Tidak Terlihat Oleh Pengguna</span>
+                          <span>Catatan Internal Admin ({m.sender_name}) — Rahasia</span>
                         </div>
                         <div className="whitespace-pre-wrap">{m.body}</div>
                       </div>
@@ -379,45 +465,57 @@ export default function AdminSupportPage() {
                 })}
               </div>
 
-              {/* Reply Box */}
-              <form onSubmit={handleSendReply} className="space-y-3 pt-2 border-t border-[#2B2438]">
-                <div className="flex items-center justify-between text-xs">
-                  <label className="flex items-center gap-2 cursor-pointer text-[#C8BED4]">
-                    <input
-                      type="checkbox"
-                      checked={isInternal}
-                      onChange={(e) => setIsInternal(e.target.checked)}
-                      className="rounded accent-[#8A5A9A]"
-                    />
-                    <span className="flex items-center gap-1">
-                      <Lock className="w-3 h-3 text-amber-400" />
-                      <span>Tandai sebagai Catatan Internal Admin (Hanya terlihat oleh tim NIVA)</span>
-                    </span>
-                  </label>
-                </div>
-
-                <div className="flex gap-2">
-                  <textarea
-                    rows={3}
-                    value={replyBody}
-                    onChange={(e) => setReplyBody(e.target.value)}
-                    placeholder={
-                      isInternal
-                        ? 'Tulis catatan rahasia internal tim admin mengenai tiket ini...'
-                        : 'Ketik balasan resmi kepada pengguna...'
-                    }
-                    className="flex-1 p-3 rounded-xl bg-[#0F0D13] border border-[#2B2438] text-xs text-white placeholder-[#6E647D] focus:outline-none focus:border-[#8A5A9A]"
-                  />
+              {/* Reply Box or Closed Banner */}
+              {isClosed ? (
+                <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center justify-between">
+                  <span>Tiket ini telah ditutup (CLOSED) dan tidak menerima pesan baru.</span>
                   <button
-                    type="submit"
-                    disabled={isSending || !replyBody.trim()}
-                    className="px-5 rounded-xl bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] text-white font-semibold text-xs flex items-center justify-center gap-1.5 hover:opacity-95 disabled:opacity-50 transition-all"
+                    onClick={() => handleStatusChange('OPEN')}
+                    className="text-xs font-semibold text-white underline hover:no-underline"
                   >
-                    <span>Kirim</span>
-                    <Send className="w-3.5 h-3.5" />
+                    Buka Kembali Tiket
                   </button>
                 </div>
-              </form>
+              ) : (
+                <form onSubmit={handleSendReply} className="space-y-3 pt-2 border-t border-[#2B2438]">
+                  <div className="flex items-center justify-between text-xs">
+                    <label className="flex items-center gap-2 cursor-pointer text-[#C8BED4]">
+                      <input
+                        type="checkbox"
+                        checked={isInternal}
+                        onChange={(e) => setIsInternal(e.target.checked)}
+                        className="rounded accent-[#8A5A9A]"
+                      />
+                      <span className="flex items-center gap-1">
+                        <Lock className="w-3 h-3 text-amber-400" />
+                        <span>Catatan Internal (Hanya terlihat oleh staf admin)</span>
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <textarea
+                      rows={3}
+                      value={replyBody}
+                      onChange={(e) => setReplyBody(e.target.value)}
+                      placeholder={
+                        isInternal
+                          ? 'Tulis catatan rahasia internal tim admin mengenai tiket ini...'
+                          : 'Ketik balasan resmi kepada pengguna tiket ini...'
+                      }
+                      className="flex-1 p-3 rounded-xl bg-[#0F0D13] border border-[#2B2438] text-xs text-white placeholder-[#6E647D] focus:outline-none focus:border-[#8A5A9A]"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isSending || !replyBody.trim()}
+                      className="px-5 rounded-xl bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] text-white font-semibold text-xs flex items-center justify-center gap-1.5 hover:opacity-95 disabled:opacity-50 transition-all"
+                    >
+                      <span>Kirim</span>
+                      <Send className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </form>
+              )}
             </>
           )}
         </div>

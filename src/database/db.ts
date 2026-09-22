@@ -613,6 +613,34 @@ export function applyEssentialMigrations(db: DatabaseSync): void {
       'Akses benefit ekosistem Telegram & Akun NIVA.',
       'Benefit Premium akan dikonfirmasi pada halaman paket.'
     );
+    // 4. Ensure Identity Tracking & History Tables
+    try {
+      try { db.exec("ALTER TABLE users ADD COLUMN telegram_username TEXT;"); } catch {}
+      try { db.exec("ALTER TABLE users ADD COLUMN telegram_display_name TEXT;"); } catch {}
+      try { db.exec("ALTER TABLE reports ADD COLUMN reported_username_at_time TEXT;"); } catch {}
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS telegram_identity_history (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          telegram_id TEXT NOT NULL,
+          previous_username TEXT,
+          new_username TEXT,
+          previous_display_name TEXT,
+          new_display_name TEXT,
+          change_type TEXT NOT NULL DEFAULT 'USERNAME_CHANGE',
+          detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tg_history_user ON telegram_identity_history(user_id);
+        CREATE INDEX IF NOT EXISTS idx_tg_history_tg_id ON telegram_identity_history(telegram_id);
+        CREATE INDEX IF NOT EXISTS idx_tg_history_prev_user ON telegram_identity_history(previous_username);
+        CREATE INDEX IF NOT EXISTS idx_tg_history_new_user ON telegram_identity_history(new_username);
+      `);
+    } catch (e) {
+      console.warn('identity tracking migration warning:', e);
+    }
   } catch (e) {
     console.warn('premium tables migration warning:', e);
   }
