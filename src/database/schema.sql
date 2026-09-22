@@ -243,20 +243,47 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- 18. Support Tickets & Chat Queue (FIFO support queue)
+-- 18. Support Tickets & Chat Queue (FIFO unified support queue)
 CREATE TABLE IF NOT EXISTS support_tickets (
-    id TEXT PRIMARY KEY, -- e.g. NIVA-PREM-001248
+    id TEXT PRIMARY KEY, -- e.g. NIVA-PREM-001248 or NIVA-849201
     user_id TEXT NOT NULL,
-    type TEXT NOT NULL DEFAULT 'PREMIUM' CHECK(type IN ('PREMIUM', 'GENERAL', 'VERIFICATION', 'ACCOUNT')),
+    type TEXT NOT NULL DEFAULT 'GENERAL',
+    category TEXT NOT NULL DEFAULT 'GENERAL' CHECK(category IN ('GENERAL', 'TECHNICAL', 'SAFETY_REPORT', 'ACCOUNT', 'PRIVACY', 'DATA_DELETION', 'STUDENT_VERIFICATION', 'COMMUNITY', 'ADVERTISING', 'PARTNERSHIP', 'PAYMENT', 'PREMIUM', 'OTHER', 'VERIFICATION')),
     subject TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN', 'WAITING', 'IN_PROGRESS', 'WAITING_FOR_USER', 'RESOLVED', 'CLOSED')),
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN', 'IN_REVIEW', 'WAITING', 'IN_PROGRESS', 'WAITING_FOR_USER', 'WAITING_FOR_ADMIN', 'RESOLVED', 'CLOSED')),
     priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK(priority IN ('LOW', 'NORMAL', 'HIGH', 'URGENT')),
+    access_token TEXT, -- Non-enumerable 64-char crypto access token for web/guest users
+    contact_name TEXT,
+    contact_email TEXT,
     assigned_admin_id TEXT,
     internal_notes TEXT,
+    environment TEXT NOT NULL DEFAULT 'PRODUCTION',
     closed_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 18b. AI Support Sessions & Conversation History
+CREATE TABLE IF NOT EXISTS ai_support_sessions (
+    id TEXT PRIMARY KEY,
+    ip_hash TEXT NOT NULL,
+    session_token TEXT UNIQUE NOT NULL,
+    message_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 18c. AI Support Messages
+CREATE TABLE IF NOT EXISTS ai_support_messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+    content TEXT NOT NULL,
+    escalation_suggested INTEGER NOT NULL DEFAULT 0,
+    suggested_category TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(session_id) REFERENCES ai_support_sessions(id) ON DELETE CASCADE
 );
 
 -- 19. Support Messages (Two-way chat between User and Admin)

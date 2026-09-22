@@ -28,7 +28,12 @@ export default function AdvertisePage() {
   const [message, setMessage] = useState('');
   const [honeypot, setHoneypot] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [result, setResult] = useState<{ 
+    type: 'success' | 'error'; 
+    text: string; 
+    ticketId?: string; 
+    accessToken?: string; 
+  } | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,7 +59,12 @@ export default function AdvertisePage() {
 
       const data = await res.json();
       if (res.ok) {
-        setResult({ type: 'success', text: data.message });
+        setResult({ 
+          type: 'success', 
+          text: data.message,
+          ticketId: data.ticketId,
+          accessToken: data.accessToken,
+        });
         setCompanyName('');
         setContactName('');
         setContactEmail('');
@@ -338,14 +348,32 @@ export default function AdvertisePage() {
 
           {result && (
             <div
-              className={`p-3.5 rounded-xl text-xs flex items-center gap-2 ${
+              className={`p-4 rounded-2xl text-xs space-y-3 ${
                 result.type === 'success'
-                  ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-800'
-                  : 'bg-rose-500/10 border border-rose-500/20 text-rose-800'
+                  ? 'bg-emerald-50 border border-emerald-200 text-emerald-900'
+                  : 'bg-rose-50 border border-rose-200 text-rose-900'
               }`}
             >
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{result.text}</span>
+              <div className="flex items-center gap-2 font-semibold">
+                <AlertCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+                <span>{result.text}</span>
+              </div>
+
+              {result.ticketId && (
+                <div className="pt-2 border-t border-emerald-200/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] text-emerald-700">Nomor Tiket Antrean Resmi:</div>
+                    <div className="font-mono font-bold text-sm text-[#5B3A6D]">{result.ticketId}</div>
+                  </div>
+                  <Link
+                    href={`/support/ticket/${result.ticketId}${result.accessToken ? `?token=${result.accessToken}` : ''}`}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#5B3A6D] text-white font-semibold text-xs hover:bg-[#4A2F59] transition-all shadow-sm"
+                  >
+                    <span>💬 Buka Chat / Diskusi Admin</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              )}
             </div>
           )}
 

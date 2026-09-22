@@ -20,6 +20,9 @@ function ensureDatabaseReady(db: DatabaseSync, targetPath: string): void {
     if (!tableRow || Number(tableRow.count) === 0) {
       initDatabase(targetPath);
     }
+    // Always run essential migrations to ensure all columns and new tables exist
+    applyEssentialMigrations(db);
+
     const adminRow = db.prepare("SELECT count(*) as count FROM admin_users").get() as { count: number } | undefined;
     if (!adminRow || Number(adminRow.count) === 0) {
       const hash = crypto.createHash('sha256').update('SulaAdmin2026!').digest('hex');
@@ -34,9 +37,10 @@ function ensureDatabaseReady(db: DatabaseSync, targetPath: string): void {
       insertAdmin.run('admin-support-01', 'support1', hash, 'Support Specialist 1', 'SUPPORT_ADMIN');
       insertAdmin.run('admin-auditor-01', 'auditor1', hash, 'Compliance Auditor', 'AUDITOR');
     }
-  } catch {
+  } catch (err) {
     try {
       initDatabase(targetPath);
+      applyEssentialMigrations(db);
     } catch {}
   } finally {
     isInitializing = false;
@@ -461,10 +465,157 @@ export function initDatabase(customPath?: string): void {
     }
   }
 
-  // Ensure environment column is present in support_tickets
+  // Run essential migrations
+  applyEssentialMigrations(db);
+}
+
+export function applyEssentialMigrations(db: DatabaseSync): void {
+  // 1. Ensure support_tickets columns
+  const ticketCols = ['environment', 'category', 'access_token', 'contact_name', 'contact_email', 'type', 'assigned_admin_id', 'internal_notes', 'closed_at'];
+  for (const col of ticketCols) {
+    try {
+      if (col === 'environment') {
+        db.exec("ALTER TABLE support_tickets ADD COLUMN environment TEXT NOT NULL DEFAULT 'PRODUCTION'");
+      } else if (col === 'category') {
+        db.exec("ALTER TABLE support_tickets ADD COLUMN category TEXT NOT NULL DEFAULT 'GENERAL'");
+      } else if (col === 'type') {
+        db.exec("ALTER TABLE support_tickets ADD COLUMN type TEXT NOT NULL DEFAULT 'GENERAL'");
+      } else {
+        db.exec(`ALTER TABLE support_tickets ADD COLUMN ${col} TEXT`);
+      }
+    } catch {
+      // Column might already exist
+    }
+  }
+
+  // 2. Ensure AI Support Tables
   try {
-    db.exec("ALTER TABLE support_tickets ADD COLUMN environment TEXT NOT NULL DEFAULT 'PRODUCTION'");
-  } catch {}
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ai_support_sessions (
+        id TEXT PRIMARY KEY,
+        ip_hash TEXT NOT NULL,
+        session_token TEXT UNIQUE NOT NULL,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS ai_support_messages (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+        content TEXT NOT NULL,
+        escalation_suggested INTEGER NOT NULL DEFAULT 0,
+        suggested_category TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY(session_id) REFERENCES ai_support_sessions(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_ai_sess_token ON ai_support_sessions(session_token);
+      CREATE INDEX IF NOT EXISTS idx_ai_msg_sess ON ai_support_messages(session_id);
+      CREATE INDEX IF NOT EXISTS idx_st_category ON support_tickets(category);
+      CREATE INDEX IF NOT EXISTS idx_st_access_token ON support_tickets(access_token);
+    `);
+  } catch (e) {
+    console.warn('ai_support tables migration warning:', e);
+  }
+
+  // 3. Ensure NIVA Premium Tables
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS premium_plans (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        price INTEGER NOT NULL,
+        duration_days INTEGER NOT NULL,
+        description TEXT,
+        features TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS premium_orders (
+        id TEXT PRIMARY KEY,
+        public_order_id TEXT UNIQUE NOT NULL,
+        user_id TEXT NOT NULL,
+        plan_id TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'IDR',
+        status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'UNDER_REVIEW', 'VERIFIED', 'REJECTED', 'EXPIRED', 'CANCELLED')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY(plan_id) REFERENCES premium_plans(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS premium_payments (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        payment_method TEXT NOT NULL DEFAULT 'QRIS',
+        amount INTEGER NOT NULL,
+        paid_at TEXT,
+        proof_file_id TEXT,
+        proof_data TEXT,
+        user_note TEXT,
+        verification_status TEXT NOT NULL DEFAULT 'PENDING' CHECK(verification_status IN ('PENDING', 'UNDER_REVIEW', 'VERIFIED', 'REJECTED', 'EXPIRED', 'CANCELLED')),
+        verified_by TEXT,
+        verified_at TEXT,
+        rejection_reason TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY(order_id) REFERENCES premium_orders(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS premium_subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        plan_id TEXT NOT NULL,
+        order_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'EXPIRED', 'CANCELLED')),
+        started_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY(plan_id) REFERENCES premium_plans(id),
+        FOREIGN KEY(order_id) REFERENCES premium_orders(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS payment_verification_logs (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        admin_id TEXT,
+        action TEXT NOT NULL,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_prem_ord_public ON premium_orders(public_order_id);
+      CREATE INDEX IF NOT EXISTS idx_prem_ord_user ON premium_orders(user_id);
+      CREATE INDEX IF NOT EXISTS idx_prem_sub_user ON premium_subscriptions(user_id);
+    `);
+
+    // Seed/update standard plans: Rp5.000 and Rp8.000
+    const insertPlan = db.prepare(`
+      INSERT OR IGNORE INTO premium_plans (id, name, price, duration_days, description, features, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+    `);
+    insertPlan.run(
+      'plan_starter_5k',
+      'Paket NIVA 1',
+      5000,
+      7,
+      'Akses benefit ekosistem Telegram & Akun NIVA.',
+      'Benefit Premium akan dikonfirmasi pada halaman paket.'
+    );
+    insertPlan.run(
+      'plan_plus_8k',
+      'Paket NIVA 2',
+      8000,
+      30,
+      'Akses benefit ekosistem Telegram & Akun NIVA.',
+      'Benefit Premium akan dikonfirmasi pada halaman paket.'
+    );
+  } catch (e) {
+    console.warn('premium tables migration warning:', e);
+  }
 }
 
 export function closeDatabase(): void {

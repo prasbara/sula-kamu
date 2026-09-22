@@ -87,6 +87,20 @@ export default function Navbar() {
               FAQ
             </Link>
             <Link
+              href="/premium"
+              prefetch={true}
+              className="px-2.5 py-2 hover:text-[#5B3A6D] hover:bg-[#5B3A6D]/5 rounded-lg transition-colors whitespace-nowrap font-semibold text-[#5B3A6D]"
+            >
+              Premium
+            </Link>
+            <Link
+              href="/support"
+              prefetch={true}
+              className="px-2.5 py-2 text-[#5B3A6D] font-bold hover:bg-[#5B3A6D]/10 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1"
+            >
+              <span>Bantuan</span>
+            </Link>
+            <Link
               href="/advertise"
               prefetch={true}
               className="px-2.5 py-2 text-[#8A5A9A] font-semibold hover:bg-[#8A5A9A]/10 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1"
@@ -212,6 +226,22 @@ export default function Navbar() {
             className="block px-3 py-2 rounded-lg text-sm font-medium text-[#17151A] hover:bg-[#5B3A6D]/10"
           >
             Tanya Jawab (FAQ)
+          </Link>
+          <Link
+            href="/premium"
+            prefetch={true}
+            onClick={() => setIsOpen(false)}
+            className="block px-3 py-2 rounded-lg text-sm font-semibold text-[#5B3A6D] hover:bg-[#5B3A6D]/10"
+          >
+            ✨ NIVA Premium
+          </Link>
+          <Link
+            href="/support"
+            prefetch={true}
+            onClick={() => setIsOpen(false)}
+            className="block px-3 py-2 rounded-lg text-sm font-bold text-[#5B3A6D] bg-[#5B3A6D]/10"
+          >
+            🎫 Pusat Bantuan & Tiket
           </Link>
           <Link
             href="/advertise"

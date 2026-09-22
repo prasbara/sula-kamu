@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { 
@@ -13,78 +13,111 @@ import {
   Search, 
   ArrowRight,
   Send,
-  Zap,
-  Heart,
-  RotateCcw
+  MessageSquare,
+  AlertCircle,
+  QrCode,
+  Info,
+  Check,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
-import { SITE_CONFIG } from '@/lib/constants';
 
-interface Plan {
+interface PremiumPlan {
   id: string;
   name: string;
   price: number;
-  duration_days: number;
-  badge_label: string;
+  formattedPrice: string;
+  durationDays: number;
+  description: string;
+  features: string;
 }
 
 export default function PremiumPage() {
-  const [selectedPlan, setSelectedPlan] = useState<'early_access' | 'early_launch'>('early_access');
-  const [userIdInput, setUserIdInput] = useState('');
-  const [paymentMethod] = useState<'QRIS'>('QRIS');
-  const [activePayment, setActivePayment] = useState<any>(null);
-  const [proofBase64, setProofBase64] = useState<string>('');
-  const [proofFileName, setProofFileName] = useState<string>('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [searchPaymentId, setSearchPaymentId] = useState('');
-  const [searchedPayment, setSearchedPayment] = useState<any>(null);
+  const [plans, setPlans] = useState<PremiumPlan[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(true);
+  const [selectedPlan, setSelectedPlan] = useState<PremiumPlan | null>(null);
+  const [expandedDetails, setExpandedDetails] = useState<{ [key: string]: boolean }>({});
+
+  // Checkout form state
+  const [contactName, setContactName] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactTelegram, setContactTelegram] = useState('');
+  const [userNote, setUserNote] = useState('');
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+
+  // Active Order State
+  const [activeOrder, setActiveOrder] = useState<any>(null);
+  const [qrisInfo, setQrisInfo] = useState<any>(null);
+  const [ticketInfo, setTicketInfo] = useState<any>(null);
+
+  // Payment Confirmation State
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [confirmNote, setConfirmNote] = useState('');
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [confirmationSuccess, setConfirmationSuccess] = useState(false);
+
+  // Order Tracker State
+  const [trackingOrderId, setTrackingOrderId] = useState('');
+  const [trackedOrder, setTrackedOrder] = useState<any>(null);
+  const [trackingLoading, setTrackingLoading] = useState(false);
+  const [trackingError, setTrackingError] = useState('');
+
+  // Global Alerts
   const [errorMessage, setErrorMessage] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
 
-  const plans: Plan[] = [
-    {
-      id: 'early_access',
-      name: 'Early Access',
-      price: 5000,
-      duration_days: 30,
-      badge_label: 'EARLY ACCESS',
-    },
-    {
-      id: 'early_launch',
-      name: 'Early Launch',
-      price: 8000,
-      duration_days: 30,
-      badge_label: 'EARLY LAUNCH',
-    },
-  ];
-
-  const handleCreatePayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage('');
-    if (!userIdInput.trim()) {
-      setErrorMessage('Silakan masukkan ID Pengguna atau Username Telegram Anda.');
-      return;
+  // Fetch plans from backend
+  useEffect(() => {
+    async function loadPlans() {
+      try {
+        const res = await fetch('/api/premium/plans');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.plans)) {
+          setPlans(data.plans);
+          if (data.plans.length > 0) {
+            setSelectedPlan(data.plans[0]);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load plans:', e);
+      } finally {
+        setLoadingPlans(false);
+      }
     }
+    loadPlans();
+  }, []);
 
-    setIsSubmitting(true);
+  const handleCreateOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPlan) return;
+    setErrorMessage('');
+    setIsSubmittingOrder(true);
+
     try {
-      const res = await fetch('/api/payments/create', {
+      const res = await fetch('/api/premium/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: userIdInput.trim(),
-          planId: selectedPlan,
-          paymentMethod: 'QRIS',
+          planId: selectedPlan.id,
+          contactName: contactName.trim() || undefined,
+          contactEmail: contactEmail.trim() || undefined,
+          contactTelegram: contactTelegram.trim() || undefined,
+          userNote: userNote.trim() || undefined,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Gagal membuat tagihan.');
 
-      setActivePayment(data.payment);
-      setSuccessMessage(`Tagihan #${data.payment.id} berhasil dibuat. Silakan lakukan pembayaran via QRIS.`);
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Gagal membuat pesanan Premium.');
+      }
+
+      setActiveOrder(data.order);
+      setQrisInfo(data.qris);
+      setTicketInfo(data.ticket);
     } catch (err: any) {
-      setErrorMessage(err.message);
+      setErrorMessage(err.message || 'Terjadi kesalahan sistem.');
     } finally {
-      setIsSubmitting(false);
+      setIsSubmittingOrder(false);
     }
   };
 
@@ -93,378 +126,488 @@ export default function PremiumPage() {
     if (!file) return;
 
     if (file.size > 5 * 1024 * 1024) {
-      setErrorMessage('Ukuran file maksimal 5MB.');
+      alert('Ukuran file bukti pembayaran maksimal 5MB.');
       return;
     }
 
-    setProofFileName(file.name);
+    setProofFile(file);
     const reader = new FileReader();
     reader.onload = () => {
-      setProofBase64(reader.result as string);
+      setProofPreview(reader.result as string);
     };
     reader.readAsDataURL(file);
   };
 
-  const handleUploadProof = async (e: React.FormEvent) => {
+  const handleConfirmPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activePayment || !proofBase64) {
-      setErrorMessage('Pilih file bukti pembayaran (struk/screenshot) terlebih dahulu.');
-      return;
-    }
-
-    setIsSubmitting(true);
+    if (!activeOrder) return;
+    setIsConfirming(true);
     setErrorMessage('');
-    try {
-      const res = await fetch(`/api/payments/${activePayment.id}/proof`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: proofBase64 }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Gagal mengunggah bukti.');
 
-      setActivePayment({
-        ...activePayment,
-        status: 'UNDER_REVIEW',
-        proof_submitted_at: new Date().toISOString(),
+    try {
+      const formData = new FormData();
+      formData.append('publicOrderId', activeOrder.publicOrderId);
+      if (confirmNote) formData.append('userNote', confirmNote);
+      if (ticketInfo?.id) formData.append('ticketId', ticketInfo.id);
+      if (ticketInfo?.accessToken) formData.append('ticketAccessToken', ticketInfo.accessToken);
+      if (proofFile) formData.append('proofFile', proofFile);
+
+      const res = await fetch('/api/premium/confirm', {
+        method: 'POST',
+        body: formData,
       });
-      setSuccessMessage('Bukti pembayaran berhasil diunggah! Permintaan Anda telah masuk ke antrean FIFO admin.');
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Gagal mengirimkan konfirmasi pembayaran.');
+      }
+
+      setConfirmationSuccess(true);
+      setActiveOrder((prev: any) => ({ ...prev, status: 'UNDER_REVIEW' }));
     } catch (err: any) {
-      setErrorMessage(err.message);
+      setErrorMessage(err.message || 'Terjadi kendala saat konfirmasi.');
     } finally {
-      setIsSubmitting(false);
+      setIsConfirming(false);
     }
   };
 
-  const handleSearchPayment = async (e: React.FormEvent) => {
+  const handleTrackOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!searchPaymentId.trim()) return;
+    if (!trackingOrderId.trim()) return;
+    setTrackingLoading(true);
+    setTrackingError('');
+    setTrackedOrder(null);
 
     try {
-      const res = await fetch(`/api/payments/${encodeURIComponent(searchPaymentId.trim())}`);
+      const res = await fetch(`/api/premium/order?orderId=${encodeURIComponent(trackingOrderId.trim())}`);
       const data = await res.json();
-      if (res.ok) {
-        setSearchedPayment(data.payment);
-      } else {
-        setSearchedPayment(null);
-        alert(data.error || 'Tagihan tidak ditemukan.');
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Pesanan tidak ditemukan.');
       }
-    } catch {
-      alert('Kendala koneksi saat melacak tagihan.');
+      setTrackedOrder(data);
+    } catch (err: any) {
+      setTrackingError(err.message || 'Gagal memeriksa status pesanan.');
+    } finally {
+      setTrackingLoading(false);
     }
   };
 
   return (
-    <div className="py-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto space-y-16">
-      {/* Hero */}
-      <div className="text-center space-y-5 max-w-3xl mx-auto">
-        <div className="flex justify-center">
-          <div className="inline-flex items-center gap-3 px-4 py-2 rounded-2xl bg-white shadow-soft border border-[#5B3A6D]/15">
-            <Image
-              src="/logo-icon.png"
-              alt="NIVA Logo"
-              width={36}
-              height={36}
-              className="object-contain"
-            />
-            <div className="text-left">
-              <span className="font-display font-bold text-xl tracking-tight text-[#3B123F] block leading-tight">
-                NIVA
-              </span>
-              <span className="text-[10px] tracking-wider text-[#8A5A9A] font-semibold uppercase block">
-                Official Membership
-              </span>
-            </div>
-          </div>
-        </div>
+    <div className="min-h-screen bg-[#FAF7F2] text-[#17151A] font-sans">
+      {/* Decorative Top Accent */}
+      <div className="w-full h-1.5 bg-gradient-to-r from-[#5B3A6D] via-[#8A5A9A] to-[#2D8C6A]" />
 
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#5B3A6D]/10 text-[#5B3A6D] text-xs font-semibold">
-          <Sparkles className="w-4 h-4 text-[#8A5A9A]" />
-          <span>NIVA Premium Membership</span>
-        </div>
-        <h1 className="text-4xl sm:text-5xl font-display font-extrabold text-[#17151A] tracking-tight">
-          Unlock More Ways to Connect.
-        </h1>
-        <p className="text-base sm:text-lg text-[#68626D]">
-          Tingkatkan pengalaman pertemanan Anda di Semarang dengan fitur eksplorasi ekstra, boost profil, dan kuota interaksi prioritas.
-        </p>
-      </div>
-
-      {/* Feature Comparison */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Free Plan Card */}
-        <div className="bg-white p-8 rounded-3xl border border-[#5B3A6D]/10 shadow-soft space-y-6 flex flex-col justify-between">
-          <div className="space-y-4">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#68626D]">Paket Standar</span>
-            <h2 className="text-2xl font-display font-bold text-[#17151A]">NIVA Free</h2>
-            <p className="text-3xl font-display font-extrabold text-[#17151A]">Rp0 <span className="text-sm font-normal text-[#68626D]">/ selamanya</span></p>
-            <p className="text-xs text-[#68626D]">Akses dasar untuk seluruh mahasiswa terdaftar di Semarang.</p>
-            <ul className="space-y-2.5 text-xs sm:text-sm text-[#68626D] pt-2 border-t border-[#5B3A6D]/10">
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#2D8C6A]" /> 10 like / hari (Pengguna belum terverifikasi)
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#2D8C6A]" /> 50 like / hari (Setelah Verifikasi Foto/KTM)
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#2D8C6A]" /> Eksplorasi kampus dan mutual matching
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#2D8C6A]" /> Obrolan internal aman via bot
-              </li>
-            </ul>
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-12 md:py-16 space-y-12">
+        {/* Hero Section */}
+        <div className="text-center space-y-4 max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#5B3A6D]/10 text-[#5B3A6D] font-semibold text-xs tracking-wide">
+            <Sparkles className="w-3.5 h-3.5 text-[#8A5A9A]" />
+            <span>NIVA Official Ecosystem</span>
           </div>
-          <a
-            href={SITE_CONFIG.telegramBotUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-[#17151A] bg-[#FAF8F6] hover:bg-[#5B3A6D]/10 border border-[#5B3A6D]/15 transition-all"
-          >
-            <span>Gunakan Versi Free di Telegram</span>
-            <Send className="w-4 h-4" />
-          </a>
-        </div>
 
-        {/* Premium Plan Card */}
-        <div className="bg-gradient-to-br from-[#5B3A6D] via-[#734882] to-[#8A5A9A] text-white p-8 rounded-3xl shadow-hover space-y-6 flex flex-col justify-between relative overflow-hidden">
-          <div className="absolute top-4 right-4 px-3 py-1 rounded-full bg-white/20 text-white text-[11px] font-bold tracking-wider">
-            RECOMMENDED
-          </div>
-          <div className="space-y-4">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#E8B4C8]">Paket Eksklusif</span>
-            <h2 className="text-2xl font-display font-bold">NIVA Premium</h2>
-            <div className="flex items-baseline gap-2">
-              <p className="text-4xl font-display font-extrabold">Rp5.000</p>
-              <span className="text-sm text-white/80">/ 1 bulan (Early Access)</span>
-            </div>
-            <p className="text-xs text-white/80">Solusi terbaik bagi mahasiswa aktif yang ingin memperluas circle secara optimal.</p>
-            <ul className="space-y-2.5 text-xs sm:text-sm text-white/90 pt-2 border-t border-white/20">
-              <li className="flex items-center gap-2">
-                <Zap className="w-4 h-4 text-[#E8B4C8]" /> 100 like / hari prioritas
-              </li>
-              <li className="flex items-center gap-2">
-                <Heart className="w-4 h-4 text-[#E8B4C8]" /> Extended campus discovery & filter minat
-              </li>
-              <li className="flex items-center gap-2">
-                <RotateCcw className="w-4 h-4 text-[#E8B4C8]" /> Rewind: kesempatan meninjau kembali profil yang terlewat
-              </li>
-              <li className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#E8B4C8]" /> Lencana Premium eksklusif pada kartu profil
-              </li>
-              <li className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-[#E8B4C8]" /> Jalur antrean verifikasi prioritas
-              </li>
-            </ul>
-          </div>
-          <button
-            onClick={() => {
-              const el = document.getElementById('payment-form-section');
-              el?.scrollIntoView({ behavior: 'smooth' });
-            }}
-            className="w-full inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl text-sm font-bold text-[#17151A] bg-white hover:bg-[#FAF8F6] shadow-md transition-all"
-          >
-            <span>Pilih Paket & Bayar Sekarang</span>
-            <ArrowRight className="w-4 h-4 text-[#5B3A6D]" />
-          </button>
-        </div>
-      </div>
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#17151A] tracking-tight">
+            NIVA Premium
+          </h1>
 
-      {/* Payment Workflow Form */}
-      <div id="payment-form-section" className="bg-white p-8 sm:p-12 rounded-3xl border border-[#5B3A6D]/15 shadow-soft space-y-8">
-        <div>
-          <h2 className="text-2xl font-display font-bold text-[#17151A]">
-            Formulir Pembelian Langganan NIVA Premium
-          </h2>
-          <p className="text-xs sm:text-sm text-[#68626D]">
-            Proses manual yang transparan: buat tagihan, lakukan transfer/QRIS, unggah bukti pembayaran, dan admin kami akan memverifikasi sesuai antrean FIFO.
+          <p className="text-sm sm:text-base text-[#5B3A6D]/80 leading-relaxed font-normal">
+            Dapatkan pengalaman NIVA Premium untuk fitur account dan Telegram.
           </p>
+
+          {/* Strict Separation Notice */}
+          <div className="mt-4 p-3.5 rounded-2xl bg-[#5B3A6D]/5 border border-[#5B3A6D]/15 text-xs text-[#5B3A6D] flex items-start gap-2.5 text-left max-w-xl mx-auto">
+            <Info className="w-4 h-4 shrink-0 text-[#5B3A6D] mt-0.5" />
+            <p className="leading-relaxed">
+              <strong>Penting:</strong> Stranger Chat dan Stranger Cam tetap dapat diakses secara gratis oleh seluruh pengguna Semarang sesuai ketentuan. Premium adalah layer terpisah khusus untuk fitur akun dan ekosistem Telegram.
+            </p>
+          </div>
         </div>
 
-        {errorMessage && (
-          <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-xs sm:text-sm text-red-700">
-            {errorMessage}
+        {/* Pricing Cards */}
+        {loadingPlans ? (
+          <div className="py-16 text-center text-sm text-[#5B3A6D]/60 animate-pulse">
+            Memuat paket resmi NIVA...
           </div>
-        )}
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+            {plans.map((p) => {
+              const isSelected = selectedPlan?.id === p.id;
+              const isExpanded = !!expandedDetails[p.id];
 
-        {successMessage && (
-          <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-xs sm:text-sm text-emerald-800">
-            {successMessage}
-          </div>
-        )}
-
-        {!activePayment ? (
-          <form onSubmit={handleCreatePayment} className="space-y-6">
-            {/* Step 1: Select Plan */}
-            <div className="space-y-3">
-              <label className="block text-xs font-bold uppercase tracking-wider text-[#17151A]">
-                1. Pilih Paket Langganan
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {plans.map((p) => (
-                  <div
-                    key={p.id}
-                    onClick={() => setSelectedPlan(p.id as any)}
-                    className={`p-5 rounded-2xl border cursor-pointer transition-all ${
-                      selectedPlan === p.id
-                        ? 'border-[#5B3A6D] bg-[#5B3A6D]/5 shadow-sm'
-                        : 'border-[#5B3A6D]/15 hover:border-[#5B3A6D]/40'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-bold text-sm text-[#17151A]">{p.name}</span>
-                      <span className="px-2 py-0.5 rounded-full bg-[#5B3A6D]/10 text-[#5B3A6D] text-[10px] font-bold">
-                        {p.badge_label}
+              return (
+                <div
+                  key={p.id}
+                  className={`relative rounded-3xl p-6 sm:p-8 transition-all duration-200 border flex flex-col justify-between ${
+                    isSelected
+                      ? 'bg-white border-[#5B3A6D] shadow-lg ring-2 ring-[#5B3A6D]/20'
+                      : 'bg-white/80 border-[#5B3A6D]/15 hover:border-[#5B3A6D]/40 shadow-sm'
+                  }`}
+                >
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sm tracking-wider uppercase text-[#8A5A9A]">
+                        {p.name}
+                      </span>
+                      <span className="text-xs px-2.5 py-1 rounded-full bg-[#FAF7F2] text-[#5B3A6D] font-medium border border-[#5B3A6D]/15">
+                        {p.durationDays} Hari
                       </span>
                     </div>
-                    <p className="text-2xl font-bold text-[#5B3A6D]">
-                      Rp{p.price.toLocaleString('id-ID')}
+
+                    <div>
+                      <div className="text-3xl sm:text-4xl font-black text-[#17151A] tracking-tight">
+                        {p.formattedPrice}
+                      </div>
+                      <p className="text-xs text-[#5B3A6D]/70 mt-1">
+                        Pembayaran sekali via QRIS (Manual Verification)
+                      </p>
+                    </div>
+
+                    <p className="text-xs text-[#17151A]/80 leading-relaxed">
+                      {p.description}
                     </p>
-                    <p className="text-xs text-[#68626D] mt-1">Durasi: {p.duration_days} hari (1 bulan)</p>
+
+                    {/* Accordion Detail Paket */}
+                    <div className="pt-2 border-t border-[#5B3A6D]/10">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedDetails((prev) => ({
+                            ...prev,
+                            [p.id]: !prev[p.id],
+                          }))
+                        }
+                        className="text-xs font-semibold text-[#5B3A6D] flex items-center justify-between w-full hover:underline"
+                      >
+                        <span>[Detail Paket]</span>
+                        {isExpanded ? (
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+
+                      {isExpanded && (
+                        <div className="mt-2.5 p-3 rounded-xl bg-[#FAF7F2] text-[11px] text-[#5B3A6D]/90 space-y-1.5 leading-relaxed">
+                          <p>{p.features || 'Benefit Premium akan dikonfirmasi pada halaman paket.'}</p>
+                          <p className="text-[10px] text-[#5B3A6D]/60 italic">
+                            *Tidak mempengaruhi antrean atau durasi Stranger Chat / Stranger Cam.
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                ))}
-              </div>
-            </div>
 
-            {/* Step 2: User Identification */}
-            <div className="space-y-2">
-              <label className="block text-xs font-bold uppercase tracking-wider text-[#17151A]">
-                2. Identitas Akun NIVA Anda
-              </label>
-              <input
-                type="text"
-                value={userIdInput}
-                onChange={(e) => setUserIdInput(e.target.value)}
-                placeholder="Masukkan User ID NIVA atau Username Telegram Anda (contoh: @username / user-uuid)"
-                className="w-full px-4 py-3 rounded-xl border border-[#5B3A6D]/20 focus:outline-none focus:ring-2 focus:ring-[#5B3A6D] text-sm"
-                required
-              />
-              <p className="text-[11px] text-[#68626D]">
-                *Tip: Anda dapat menemukan ID akun Anda dengan mengetik <code>/profile</code> di bot Telegram NIVA.
-              </p>
-            </div>
-
-            {/* Step 3: Payment Method (QRIS Only) */}
-            <div className="space-y-3">
-              <label className="block text-xs font-bold uppercase tracking-wider text-[#17151A]">
-                3. Metode Pembayaran (QRIS Resmi NIVA)
-              </label>
-              <div className="p-4 rounded-xl border border-[#5B3A6D] bg-[#5B3A6D]/5 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-sm text-[#17151A]">QRIS Instan</span>
-                  <p className="text-xs text-[#68626D] mt-0.5">Mendukung GoPay, OVO, DANA, BCA, ShopeePay, LinkAja & Bank Lainnya</p>
+                  <div className="pt-6">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPlan(p);
+                        setActiveOrder(null);
+                        setConfirmationSuccess(false);
+                      }}
+                      className={`w-full py-3.5 rounded-full font-bold text-xs tracking-wide transition-all ${
+                        isSelected
+                          ? 'bg-[#5B3A6D] text-white hover:bg-[#4A2F59] shadow-md'
+                          : 'bg-[#FAF7F2] text-[#5B3A6D] hover:bg-[#5B3A6D]/10 border border-[#5B3A6D]/20'
+                      }`}
+                    >
+                      {isSelected ? '✓ Paket Terpilih' : 'Upgrade Premium'}
+                    </button>
+                  </div>
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-[#5B3A6D] text-white text-xs font-bold">
-                  QRIS AKTIF
+              );
+            })}
+          </div>
+        )}
+
+        {/* Checkout Flow Section */}
+        {selectedPlan && !activeOrder && (
+          <div className="max-w-xl mx-auto bg-white rounded-3xl p-6 sm:p-8 border border-[#5B3A6D]/15 shadow-sm space-y-6">
+            <div className="flex items-center gap-3 pb-4 border-b border-[#5B3A6D]/10">
+              <div className="w-10 h-10 rounded-2xl bg-[#5B3A6D]/10 flex items-center justify-center text-[#5B3A6D]">
+                <CreditCard className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-[#17151A]">
+                  Langkah 1: Konfirmasi Pesanan Premium
+                </h2>
+                <p className="text-xs text-[#5B3A6D]/70">
+                  Paket: {selectedPlan.name} ({selectedPlan.formattedPrice})
+                </p>
+              </div>
+            </div>
+
+            {errorMessage && (
+              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateOrder} className="space-y-4 text-xs">
+              <div className="space-y-1.5">
+                <label className="font-semibold text-[#17151A]">Nama Pemesan (Opsional)</label>
+                <input
+                  type="text"
+                  value={contactName}
+                  onChange={(e) => setContactName(e.target.value)}
+                  placeholder="Nama atau inisial Anda"
+                  className="w-full bg-[#FAF7F2] border border-[#5B3A6D]/20 rounded-xl p-3 focus:outline-none focus:border-[#5B3A6D]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-[#17151A]">Alamat Email (Opsional)</label>
+                  <input
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    placeholder="email@anda.com"
+                    className="w-full bg-[#FAF7F2] border border-[#5B3A6D]/20 rounded-xl p-3 focus:outline-none focus:border-[#5B3A6D]"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-[#17151A]">Username Telegram (Opsional)</label>
+                  <input
+                    type="text"
+                    value={contactTelegram}
+                    onChange={(e) => setContactTelegram(e.target.value)}
+                    placeholder="@username_telegram"
+                    className="w-full bg-[#FAF7F2] border border-[#5B3A6D]/20 rounded-xl p-3 focus:outline-none focus:border-[#5B3A6D]"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="font-semibold text-[#17151A]">Catatan Pembayaran (Opsional)</label>
+                <input
+                  type="text"
+                  value={userNote}
+                  onChange={(e) => setUserNote(e.target.value)}
+                  placeholder="Misal: Pembayaran atas nama BCA ..."
+                  className="w-full bg-[#FAF7F2] border border-[#5B3A6D]/20 rounded-xl p-3 focus:outline-none focus:border-[#5B3A6D]"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmittingOrder}
+                className="w-full py-4 rounded-full font-bold text-xs tracking-wider uppercase text-white bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] hover:opacity-95 shadow-md disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+              >
+                <span>{isSubmittingOrder ? 'Membuat Pesanan...' : 'Lanjutkan ke Pembayaran QRIS'}</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Payment & QRIS Display Step */}
+        {activeOrder && (
+          <div className="max-w-2xl mx-auto bg-white rounded-3xl p-6 sm:p-8 border border-[#5B3A6D]/20 shadow-md space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-[#5B3A6D]/10 gap-3">
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-widest text-[#8A5A9A]">
+                  Nomor Pesanan Resmi
                 </span>
+                <div className="font-mono text-xl sm:text-2xl font-black text-[#5B3A6D]">
+                  {activeOrder.publicOrderId}
+                </div>
+              </div>
+              <div className="text-right sm:text-right">
+                <span className="text-[10px] uppercase font-bold tracking-widest text-[#5B3A6D]/60">
+                  Total Bayar
+                </span>
+                <div className="text-xl sm:text-2xl font-black text-[#17151A]">
+                  {activeOrder.formattedAmount}
+                </div>
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full py-4 rounded-full font-bold text-white bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] shadow-md hover:opacity-95 transition-all text-sm sm:text-base disabled:opacity-50"
-            >
-              {isSubmitting ? 'Memproses...' : 'Lanjutkan ke Pembayaran'}
-            </button>
-          </form>
-        ) : (
-          /* Payment Instructions & Proof Upload */
-          <div className="space-y-6">
-            <div className="p-6 rounded-2xl bg-[#FAF8F6] border border-[#5B3A6D]/15 space-y-4">
-              <div className="flex items-center justify-between border-b border-[#5B3A6D]/10 pb-3">
-                <span className="font-bold text-sm text-[#17151A]">Nomor Tagihan:</span>
-                <span className="font-mono font-bold text-base text-[#5B3A6D]">{activePayment.id}</span>
+            {/* QRIS Container */}
+            <div className="p-6 rounded-2xl bg-[#FAF7F2] border border-[#5B3A6D]/15 flex flex-col items-center text-center space-y-4">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white text-xs font-semibold text-[#5B3A6D] shadow-sm">
+                <QrCode className="w-3.5 h-3.5" />
+                <span>QRIS Pembayaran Resmi NIVA</span>
               </div>
-              <div className="flex items-center justify-between border-b border-[#5B3A6D]/10 pb-3 text-xs sm:text-sm">
-                <span>Total Nominal yang Harus Dibayar:</span>
-                <strong className="text-xl text-[#17151A]">Rp{Number(activePayment.amount).toLocaleString('id-ID')}</strong>
+
+              {qrisInfo?.qrisImageUrl ? (
+                <div className="relative w-64 h-64 rounded-2xl overflow-hidden border border-[#5B3A6D]/20 shadow-sm bg-white p-2">
+                  <Image
+                    src={qrisInfo.qrisImageUrl}
+                    alt="NIVA QRIS"
+                    fill
+                    className="object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="w-60 h-60 rounded-2xl bg-white border-2 border-dashed border-[#5B3A6D]/30 flex flex-col items-center justify-center p-4 text-center">
+                  <QrCode className="w-12 h-12 text-[#5B3A6D]/40 mb-2" />
+                  <p className="text-xs font-bold text-[#5B3A6D]">QRIS NIVA</p>
+                  <p className="text-[10px] text-[#5B3A6D]/70 mt-1">
+                    {qrisInfo?.accountName || 'NIVA Indonesia (QRIS)'}
+                  </p>
+                  <p className="text-[9px] text-[#5B3A6D]/50 mt-2">
+                    Pindai melalui m-Banking (BCA, Mandiri, BRI, BNI) atau e-Wallet (GoPay, OVO, Dana, ShopeePay).
+                  </p>
+                </div>
+              )}
+
+              <div className="max-w-md text-xs text-[#5B3A6D]/80 leading-relaxed">
+                {qrisInfo?.instructions ||
+                  'Lakukan transfer tepat sesuai nominal di atas. Setelah transfer berhasil, klik tombol konfirmasi di bawah ini.'}
               </div>
-              <div className="space-y-2 text-xs text-[#68626D]">
-                <p><strong>Instruksi Pembayaran QRIS:</strong></p>
-                <p>1. Scan QRIS resmi NIVA melalui aplikasi GoPay, OVO, DANA, BCA, ShopeePay atau e-wallet/m-banking Anda.</p>
-                <p>2. Pastikan nominal pembayaran tepat sebesar <strong>Rp{Number(activePayment.amount).toLocaleString('id-ID')}</strong>.</p>
-                <p>3. Simpan screenshot bukti transaksi berhasil, lalu unggah melalui formulir di bawah ini.</p>
+
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-900 text-[11px] leading-relaxed max-w-md">
+                🛡️ <strong>Keamanan:</strong> NIVA tidak pernah meminta kata sandi, kode OTP, atau PIN perbankan Anda.
               </div>
             </div>
 
-            {activePayment.status === 'PENDING' ? (
-              <form onSubmit={handleUploadProof} className="space-y-4">
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#17151A]">
-                  Unggah Bukti Pembayaran (Screenshot / Foto Struk)
-                </label>
-                <div className="border-2 border-dashed border-[#5B3A6D]/30 rounded-2xl p-6 text-center hover:border-[#5B3A6D] transition-colors">
-                  <UploadCloud className="w-10 h-10 text-[#5B3A6D] mx-auto mb-2" />
+            {/* Confirmation & Ticket Section */}
+            {!confirmationSuccess ? (
+              <form onSubmit={handleConfirmPayment} className="space-y-4 pt-2">
+                <div className="space-y-1.5 text-xs">
+                  <label className="font-semibold text-[#17151A] flex items-center justify-between">
+                    <span>Unggah Bukti Transfer (Opsional tetapi mempercepat verifikasi)</span>
+                    <span className="text-[10px] text-[#5B3A6D]/60">Maks. 5MB</span>
+                  </label>
                   <input
                     type="file"
-                    accept="image/png, image/jpeg, image/webp"
+                    accept="image/png,image/jpeg,image/webp"
                     onChange={handleFileChange}
-                    className="block w-full text-xs text-[#68626D] file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-[#5B3A6D]/10 file:text-[#5B3A6D] hover:file:bg-[#5B3A6D]/20 cursor-pointer"
-                    required
+                    className="w-full text-xs text-[#5B3A6D] file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-[#5B3A6D]/10 file:text-[#5B3A6D] hover:file:bg-[#5B3A6D]/20"
                   />
-                  {proofFileName && <p className="text-xs font-semibold text-[#2D8C6A] mt-2">File dipilih: {proofFileName}</p>}
+                  {proofPreview && (
+                    <div className="mt-2 relative w-24 h-24 rounded-lg overflow-hidden border">
+                      <Image src={proofPreview} alt="Preview" fill className="object-cover" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-1.5 text-xs">
+                  <label className="font-semibold text-[#17151A]">Catatan Pembayaran Tambahan (Opsional)</label>
+                  <input
+                    type="text"
+                    value={confirmNote}
+                    onChange={(e) => setConfirmNote(e.target.value)}
+                    placeholder="Nama rekening pengirim atau jam transfer..."
+                    className="w-full bg-[#FAF7F2] border border-[#5B3A6D]/20 rounded-xl p-3 focus:outline-none focus:border-[#5B3A6D]"
+                  />
                 </div>
 
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="w-full py-3.5 rounded-full font-bold text-white bg-gradient-to-r from-[#2D8C6A] to-[#34d399] shadow-md hover:opacity-95 transition-all text-sm disabled:opacity-50"
+                  disabled={isConfirming}
+                  className="w-full py-4 rounded-full font-bold text-xs tracking-wider uppercase text-white bg-gradient-to-r from-[#2D8C6A] to-[#10B981] hover:opacity-95 shadow-md disabled:opacity-50 transition-all flex items-center justify-center gap-2"
                 >
-                  {isSubmitting ? 'Mengunggah...' : 'Kirim Bukti Pembayaran'}
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{isConfirming ? 'Mengirimkan Verifikasi...' : 'Saya Sudah Membayar'}</span>
                 </button>
               </form>
             ) : (
-              <div className="p-6 rounded-2xl bg-amber-50 border border-amber-200 text-center space-y-3">
-                <Clock className="w-8 h-8 text-amber-600 mx-auto" />
-                <h3 className="font-bold text-base text-amber-900">
-                  Status: {activePayment.status} (Dalam Antrean Verifikasi FIFO)
-                </h3>
-                <p className="text-xs text-amber-800 leading-relaxed max-w-md mx-auto">
-                  Bukti pembayaran Anda telah tercatat dengan aman. Tim verifikator admin kami akan memeriksa bukti transfer Anda sesuai urutan antrean kedatangan (First-In, First-Out). Langganan Premium akan otomatis aktif setelah disetujui.
+              <div className="p-5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 space-y-4">
+                <div className="flex items-center gap-2 font-bold text-sm text-emerald-900">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                  <span>Pembayaran Anda telah dikirim untuk verifikasi admin.</span>
+                </div>
+
+                <p className="text-xs leading-relaxed text-emerald-800">
+                  Tim NIVA menangani ticket dan verifikasi pembayaran berdasarkan ketersediaan dan antrean prioritas. Tiket bantuan Anda telah otomatis dibuat.
                 </p>
-                <div className="pt-2">
-                  <span className="font-mono text-xs font-semibold px-3 py-1 rounded-full bg-white text-amber-900 border">
-                    ID: {activePayment.id}
+
+                {ticketInfo?.chatUrl && (
+                  <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
+                    <Link
+                      href={ticketInfo.chatUrl}
+                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-[#5B3A6D] text-white font-bold text-xs hover:bg-[#4A2F59] transition-all shadow-sm"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>Buka Chat / Tiket Dukungan</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
+
+                    <span className="text-[11px] text-[#5B3A6D]/70 font-mono">
+                      Tiket: #{ticketInfo.id}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="text-[11px] text-[#5B3A6D]/60 text-center leading-relaxed pt-2 border-t border-[#5B3A6D]/10">
+              Tim NIVA mungkin tidak selalu tersedia 24/7. Jika belum mendapat respons langsung, tiket tetap tersimpan dan dapat ditindaklanjuti ketika admin tersedia.
+            </div>
+          </div>
+        )}
+
+        {/* Order Status Tracker */}
+        <div className="max-w-xl mx-auto pt-6 border-t border-[#5B3A6D]/15">
+          <div className="bg-white rounded-3xl p-6 sm:p-7 border border-[#5B3A6D]/15 shadow-sm space-y-4">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#5B3A6D]">
+              <Search className="w-4 h-4 text-[#8A5A9A]" />
+              <span>Cek Status Pesanan Premium</span>
+            </div>
+
+            <form onSubmit={handleTrackOrder} className="flex gap-2 text-xs">
+              <input
+                type="text"
+                value={trackingOrderId}
+                onChange={(e) => setTrackingOrderId(e.target.value)}
+                placeholder="NIVA-PREM-XXXXXX"
+                className="flex-1 bg-[#FAF7F2] border border-[#5B3A6D]/20 rounded-xl px-3.5 py-2.5 font-mono focus:outline-none focus:border-[#5B3A6D]"
+              />
+              <button
+                type="submit"
+                disabled={trackingLoading}
+                className="px-5 py-2.5 rounded-xl font-bold text-white bg-[#5B3A6D] hover:bg-[#4A2F59] transition disabled:opacity-50"
+              >
+                {trackingLoading ? 'Memeriksa...' : 'Cek'}
+              </button>
+            </form>
+
+            {trackingError && (
+              <div className="text-xs text-rose-600">{trackingError}</div>
+            )}
+
+            {trackedOrder && (
+              <div className="p-4 rounded-2xl bg-[#FAF7F2] border border-[#5B3A6D]/15 text-xs space-y-2 mt-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono font-bold text-[#5B3A6D]">
+                    {trackedOrder.order.publicOrderId}
+                  </span>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    trackedOrder.order.status === 'VERIFIED'
+                      ? 'bg-emerald-500/20 text-emerald-800'
+                      : trackedOrder.order.status === 'UNDER_REVIEW'
+                      ? 'bg-amber-500/20 text-amber-800'
+                      : trackedOrder.order.status === 'REJECTED'
+                      ? 'bg-rose-500/20 text-rose-800'
+                      : 'bg-[#5B3A6D]/10 text-[#5B3A6D]'
+                  }`}>
+                    {trackedOrder.order.status}
                   </span>
                 </div>
+
+                <div className="text-[11px] text-[#5B3A6D]/80">
+                  Paket: {trackedOrder.order.planName} ({trackedOrder.order.formattedAmount})
+                </div>
+
+                {trackedOrder.subscription && (
+                  <div className="text-[11px] text-emerald-800 font-semibold pt-1 border-t border-[#5B3A6D]/10">
+                    ✓ Langganan Aktif hingga: {new Date(trackedOrder.subscription.expiresAt).toLocaleDateString('id-ID')}
+                  </div>
+                )}
+
+                {trackedOrder.payment?.rejectionReason && (
+                  <div className="text-[11px] text-rose-700 pt-1 border-t border-rose-200">
+                    Alasan: {trackedOrder.payment.rejectionReason}
+                  </div>
+                )}
               </div>
             )}
           </div>
-        )}
-      </div>
-
-      {/* Track Existing Payment */}
-      <div className="p-8 rounded-3xl bg-[#FAF8F6] border border-[#5B3A6D]/15 space-y-6">
-        <h3 className="text-xl font-display font-bold text-[#17151A] flex items-center gap-2">
-          <Search className="w-5 h-5 text-[#5B3A6D]" />
-          <span>Lacak Status Tagihan Pembayaran Anda</span>
-        </h3>
-        <form onSubmit={handleSearchPayment} className="flex flex-col sm:flex-row gap-3">
-          <input
-            type="text"
-            value={searchPaymentId}
-            onChange={(e) => setSearchPaymentId(e.target.value)}
-            placeholder="Masukkan Payment ID (contoh: PAY-NIVA-000124)"
-            className="flex-1 px-4 py-3 rounded-xl border border-[#5B3A6D]/20 focus:outline-none focus:ring-2 focus:ring-[#5B3A6D] text-sm bg-white"
-            required
-          />
-          <button
-            type="submit"
-            className="px-6 py-3 rounded-xl font-semibold text-white bg-[#5B3A6D] hover:bg-[#4A2F59] transition-all text-sm"
-          >
-            Cek Status
-          </button>
-        </form>
-
-        {searchedPayment && (
-          <div className="p-5 rounded-2xl bg-white border border-[#5B3A6D]/15 space-y-2 text-xs sm:text-sm">
-            <p><strong>Payment ID:</strong> {searchedPayment.id}</p>
-            <p><strong>Paket:</strong> {searchedPayment.plan_name} (Rp{Number(searchedPayment.amount).toLocaleString('id-ID')})</p>
-            <p><strong>Status:</strong> <span className="font-bold text-[#5B3A6D]">{searchedPayment.status}</span></p>
-            <p><strong>Dibuat:</strong> {searchedPayment.created_at}</p>
-            {searchedPayment.review_notes && <p><strong>Catatan Reviewer:</strong> {searchedPayment.review_notes}</p>}
-          </div>
-        )}
-      </div>
+        </div>
+      </main>
     </div>
   );
 }

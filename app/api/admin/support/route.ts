@@ -14,7 +14,8 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const statusFilter = searchParams.get('status') || 'ALL';
+  const categoryFilter = searchParams.get('category') || 'ALL';
 
-  const queue = SupportService.getSupportQueue(statusFilter);
+  const queue = SupportService.getSupportQueue(statusFilter, categoryFilter);
   return NextResponse.json({ queue });
 }

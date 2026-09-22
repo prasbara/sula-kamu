@@ -31,14 +31,16 @@ export default function Footer() {
               <br />
               <span className="italic text-[#E8B4C8]">“Meet someone worth knowing.”</span>
             </p>
-            <div className="space-y-1 text-gray-400 text-[11px] pt-1">
+            <div className="space-y-1.5 text-gray-400 text-[11px] pt-1">
               <div className="flex items-center gap-2">
-                <Mail className="w-3.5 h-3.5 text-[#8A5A9A]" />
-                <span>Email Dukungan: team@niva.id</span>
+                <Link href="/support" className="hover:text-white transition-colors flex items-center gap-2 text-purple-300">
+                  <span>🎫 Pusat Bantuan & Tiket Resmi</span>
+                </Link>
               </div>
               <div className="flex items-center gap-2">
-                <Send className="w-3.5 h-3.5 text-[#2D8C6A]" />
-                <span>Bot Telegram Resmi: @nivasocialmakingbot</span>
+                <Link href="/ai-support" className="hover:text-white transition-colors flex items-center gap-2 text-[#E8B4C8]">
+                  <span>💬 Tanya AI NIVA (First-Line Help)</span>
+                </Link>
               </div>
               <div className="flex items-center gap-2">
                 <MapPin className="w-3.5 h-3.5 text-[#5B3A6D]" />
@@ -73,6 +75,11 @@ export default function Footer() {
                   <span>NIVA Telegram</span>
                   <ArrowUpRight className="w-3 h-3 text-gray-500" />
                 </a>
+              </li>
+              <li>
+                <Link href="/premium" className="hover:text-white transition-colors text-[#E8B4C8] font-medium">
+                  ✨ NIVA Premium
+                </Link>
               </li>
               <li>
                 <Link href="/student-verification" className="hover:text-white transition-colors">
@@ -179,8 +186,18 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
-                <Link href="/about#contact" className="hover:text-white transition-colors">
-                  Hubungi Tim NIVA
+                <Link href="/support" className="hover:text-white transition-colors text-purple-300 font-semibold">
+                  Pusat Bantuan & Tiket
+                </Link>
+              </li>
+              <li>
+                <Link href="/support/new" className="hover:text-white transition-colors">
+                  Buat Tiket Bantuan
+                </Link>
+              </li>
+              <li>
+                <Link href="/ai-support" className="hover:text-white transition-colors">
+                  Tanya AI NIVA
                 </Link>
               </li>
             </ul>

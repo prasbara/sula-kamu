@@ -5,6 +5,7 @@ import {
   Send, 
   ArrowRight, 
   Sparkles, 
+  Ticket,
   Users, 
   Lock, 
   EyeOff, 
@@ -1114,6 +1115,72 @@ export default function HomePage() {
               </p>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* 17b. PUSAT BANTUAN NIVA */}
+      <section className="px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto">
+        <div className="bg-gradient-to-br from-[#1C1726] to-[#14111C] p-8 sm:p-12 rounded-3xl border border-[#2B2438] text-white shadow-xl space-y-6">
+          <div className="space-y-3 text-center sm:text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#5B3A6D]/30 border border-[#5B3A6D]/60 text-xs font-semibold text-[#E8B4C8]">
+              <Ticket className="w-3.5 h-3.5" />
+              <span>Saluran Bantuan Resmi NIVA</span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-display font-bold text-white tracking-tight">
+              Pusat Bantuan NIVA
+            </h2>
+            <p className="text-xs sm:text-sm text-[#C8BED4] max-w-2xl leading-relaxed">
+              Ada pertanyaan, laporan keamanan, masalah akun, kebutuhan verifikasi manual, atau ingin bekerja sama dengan NIVA? <strong>Buat Ticket Bantuan melalui NIVA.</strong>
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+            <Link
+              href="/support"
+              className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-[#8A5A9A]/60 hover:bg-white/10 transition-all flex flex-col justify-between space-y-4 group"
+            >
+              <div className="space-y-2">
+                <div className="w-10 h-10 rounded-xl bg-[#5B3A6D] flex items-center justify-center text-white">
+                  <Ticket className="w-5 h-5" />
+                </div>
+                <div className="font-bold text-base text-white group-hover:text-[#E8B4C8] transition-colors">
+                  Buka Pusat Bantuan & Tiket
+                </div>
+                <p className="text-xs text-[#9D93A8] leading-relaxed">
+                  Ajukan tiket bantuan resmi untuk ditangani langsung oleh tim staf dan moderator NIVA.
+                </p>
+              </div>
+              <div className="text-xs font-semibold text-purple-300 flex items-center gap-1">
+                <span>Buka Pusat Bantuan</span>
+                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </Link>
+
+            <Link
+              href="/ai-support"
+              className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-[#8A5A9A]/60 hover:bg-white/10 transition-all flex flex-col justify-between space-y-4 group"
+            >
+              <div className="space-y-2">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#5B3A6D] to-[#8A5A9A] flex items-center justify-center text-white">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div className="font-bold text-base text-white group-hover:text-[#E8B4C8] transition-colors">
+                  Tanya AI NIVA
+                </div>
+                <p className="text-xs text-[#9D93A8] leading-relaxed">
+                  Dapatkan jawaban cepat seputar fitur, keselamatan berteman, privasi UU PDP, dan aturan komunitas.
+                </p>
+              </div>
+              <div className="text-xs font-semibold text-[#E8B4C8] flex items-center gap-1">
+                <span>Mulai Tanya AI</span>
+                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </Link>
+          </div>
+
+          <p className="text-[11px] text-[#9D93A8] border-t border-[#2B2438] pt-4">
+            ℹ️ Tim NIVA mungkin tidak selalu tersedia 24/7. Jika pesan belum langsung mendapat respons, ticket Anda tetap tersimpan dan dapat ditindaklanjuti oleh admin ketika tersedia.
+          </p>
         </div>
       </section>
 

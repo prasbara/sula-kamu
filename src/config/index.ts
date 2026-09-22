@@ -58,4 +58,10 @@ export const config = {
   STRANGER_CAM_ENABLED: process.env.STRANGER_CAM_ENABLED !== 'false',
   STRANGER_CAM_FACE_GRACE_SECONDS: parseInt(process.env.STRANGER_CAM_FACE_GRACE_SECONDS || '3', 10),
   STRANGER_CAM_FACE_CONFIDENCE: parseFloat(process.env.STRANGER_CAM_FACE_CONFIDENCE || '0.70'),
+  AI_PROVIDER: process.env.AI_PROVIDER || 'openrouter',
+  AI_API_KEY: process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY || '',
+  AI_MODEL: process.env.AI_MODEL || process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+  AI_BASE_URL: process.env.AI_BASE_URL || 'https://openrouter.ai/api/v1',
+  AI_MAX_TOKENS: parseInt(process.env.AI_MAX_TOKENS || '600', 10),
+  AI_TIMEOUT: parseInt(process.env.AI_TIMEOUT || '15000', 10),
 };
