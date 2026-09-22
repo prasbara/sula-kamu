@@ -23,7 +23,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: 'NIVA Stranger Chat — Anonymous 1-on-1 Text Chat Semarang',
-    description: 'Ngobrol santai tanpa perlu akun, tanpa nomor HP, dan 100% anonim di wilayah Semarang.',
+    description: 'Ngobrol santai tanpa perlu akun, tanpa nomor HP, anonim dan ephemeral di wilayah Semarang.',
     url: `${SITE_CONFIG.url}/stranger-chat`,
     siteName: 'NIVA',
     type: 'website',

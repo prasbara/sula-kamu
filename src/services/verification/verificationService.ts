@@ -348,5 +348,16 @@ export class VerificationService {
 
       db.prepare("UPDATE users SET verification_status = 'VERIFICATION_REJECTED', updated_at = datetime('now') WHERE id = ?").run(verif.user_id);
     }
+
+    // Purge temporary physical review file per data minimization & retention policy (Section 5)
+    try {
+      const filename = `ktm_review_${verificationId}.webp`;
+      const tempPath = path.join(config.UPLOADS_DIR, filename);
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    } catch (cleanupErr) {
+      console.warn('Failed to unlink temporary KTM review file:', cleanupErr);
+    }
   }
 }

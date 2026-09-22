@@ -1,13 +1,13 @@
 export const SITE_CONFIG = {
   name: 'NIVA',
-  title: 'NIVA — Platform Mahasiswa Semarang | Safe Matchmaking & Stranger Cam',
-  tagline: 'Meet someone worth knowing.',
-  descriptor: 'Platform Sosial, Safe Matchmaking & Stranger Cam Mahasiswa Semarang',
-  description: 'NIVA adalah platform sosial, safe matchmaking, dan stranger video chat eksklusif untuk mahasiswa perguruan tinggi di Semarang (UNDIP, UNNES, UDINUS, UNISSULA, POLINES, dll). 18+, aman, dan terverifikasi.',
+  title: 'NIVA — Stranger Chat & Stranger Cam Semarang | Random 1-on-1',
+  tagline: 'Meet a Stranger. Start a Conversation.',
+  descriptor: 'Platform Stranger Chat & Stranger Cam 1-on-1 Komunitas Semarang',
+  description: 'NIVA adalah platform Stranger Chat dan Stranger Cam 1-on-1 untuk komunitas Semarang. 18+, privacy-first, moderated, tanpa registrasi untuk fitur stranger.',
   url: 'https://niva.id',
   telegramBotUrl: process.env.NEXT_PUBLIC_TELEGRAM_BOT_URL || 'https://t.me/nivasocialmakingbot',
   region: 'Semarang, Jawa Tengah, Indonesia',
-  independentNotice: 'NIVA adalah platform independen yang dirancang untuk mahasiswa dan tidak berafiliasi, disponsori, atau dioperasikan oleh universitas mana pun.',
+  independentNotice: 'NIVA adalah platform independen yang dirancang untuk komunitas Semarang dan tidak berafiliasi, disponsori, atau dioperasikan oleh universitas mana pun.',
 };
 
 export const SEMARANG_INSTITUTIONS = [

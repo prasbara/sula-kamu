@@ -6,21 +6,27 @@ import { ModerationSeverity } from '@/src/types/index';
 
 export const dynamic = 'force-dynamic';
 
-function isAuthorizedAdmin(req: NextRequest): boolean {
+function getAuthorizedAdminRole(req: NextRequest): string | null {
   const token = req.cookies.get('niva_admin_token')?.value;
-  if (token && AdminAuthService.validateSession(token)) {
-    return true;
+  if (token) {
+    const session = AdminAuthService.validateSession(token);
+    if (session) return session.role;
   }
   const apiKey = req.headers.get('x-api-key');
   if (apiKey && apiKey === config.ADMIN_API_KEY) {
-    return true;
+    return 'SUPER_ADMIN';
   }
-  return false;
+  return null;
 }
 
 export async function GET(req: NextRequest) {
-  if (!isAuthorizedAdmin(req)) {
+  const role = getAuthorizedAdminRole(req);
+  if (!role) {
     return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
+  }
+
+  if (!AdminAuthService.hasPermission(role as any, 'moderate_content') && role !== 'AUDITOR') {
+    return NextResponse.json({ error: 'FORBIDDEN: Akses khusus Moderator, Auditor, atau Super Admin' }, { status: 403 });
   }
 
   try {

@@ -24,6 +24,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
   }
 
+  if (!AdminAuthService.hasPermission(admin.role as any, 'moderate_content')) {
+    return NextResponse.json({ error: 'FORBIDDEN: Akses khusus Moderator atau Super Admin' }, { status: 403 });
+  }
+
   try {
     const body = await req.json();
     const { eventId, action, notes } = body;

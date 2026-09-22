@@ -438,7 +438,7 @@ export default function StrangerChatApp() {
             <div className="flex items-center gap-2">
               <h2 className="text-base sm:text-lg font-bold tracking-tight">NIVA Stranger Chat</h2>
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#8A5A9A]/20 text-[#D8B4E2] border border-[#8A5A9A]/30">
-                100% Anonymous
+                Ephemeral & Anonymous
               </span>
             </div>
             <p className="text-xs text-[#A89EB0] flex items-center gap-1.5">

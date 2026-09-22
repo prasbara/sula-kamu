@@ -89,6 +89,11 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
+                <Link href="/terms" className="hover:text-white transition-colors">
+                  Syarat & Ketentuan
+                </Link>
+              </li>
+              <li>
                 <Link href="/privacy#retention" className="hover:text-white transition-colors">
                   Penghapusan Data & KTM
                 </Link>

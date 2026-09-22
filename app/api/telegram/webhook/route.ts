@@ -27,7 +27,7 @@ function getAdminHandler() {
 
 export async function POST(req: NextRequest) {
   const secret = req.headers.get('x-telegram-bot-api-secret-token');
-  if (config.WEBHOOK_SECRET && secret && secret !== config.WEBHOOK_SECRET) {
+  if (config.WEBHOOK_SECRET && (!secret || secret !== config.WEBHOOK_SECRET)) {
     return new Response(JSON.stringify({ error: 'UNAUTHORIZED_WEBHOOK_SECRET' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },

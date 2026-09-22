@@ -6,58 +6,48 @@ import {
   ArrowRight, 
   Sparkles, 
   Users, 
-  Heart, 
   Lock, 
   EyeOff, 
   UserCheck, 
   Flag, 
   Camera, 
   CheckCircle2,
-  GraduationCap,
   Zap,
   RotateCcw,
-  Star,
-  MessageSquare
+  MessageSquare,
+  Video,
+  AlertTriangle,
+  UserX,
+  Compass,
+  FileCheck2,
+  HeartHandshake
 } from 'lucide-react';
-import { SITE_CONFIG, SEMARANG_INSTITUTIONS, FIXED_INSTITUTION_COUNT } from '@/lib/constants';
+import { SITE_CONFIG, FIXED_INSTITUTION_COUNT } from '@/lib/constants';
 import LiveStatsBar from '@/components/LiveStatsBar';
-import StrangerCamComingSoon from '@/components/StrangerCamComingSoon';
-import { ReviewService } from '@/src/services/review/reviewService';
+import DatingWaitlistForm from '@/components/DatingWaitlistForm';
 import JsonLd from '@/components/JsonLd';
 
 export default function HomePage() {
-  let reviewsData = { reviews: [] as any[], total: 0 };
-  try {
-    reviewsData = ReviewService.getPublicReviews(3);
-  } catch (err) {
-    // Graceful fallback if database initializing
-    reviewsData = { reviews: [], total: 0 };
-  }
-
   const faqs = [
     {
-      q: 'Apakah NIVA merupakan aplikasi resmi dari universitas di Semarang?',
-      a: 'Tidak. NIVA adalah platform independen yang dibangun khusus untuk melayani mahasiswa di wilayah Semarang. NIVA tidak berafiliasi, dioperasikan, atau disponsori oleh perguruan tinggi mana pun.',
+      q: 'Apakah NIVA membutuhkan pendaftaran?',
+      a: 'Untuk Stranger Chat dan Stranger Cam, pengguna tidak perlu membuat akun jika memenuhi persyaratan akses. Cukup konfirmasi usia 18+, konfirmasi domisili area Semarang, dan setujui aturan keselamatan.',
     },
     {
-      q: 'Apa perbedaan Verifikasi Foto (Photo Verified) dan Verifikasi KTM (Student Verified)?',
-      a: 'Verifikasi Foto memastikan keaslian foto selfie wajah Anda untuk mencegah akun bot/tiruan (kuota 50 like/hari), namun tidak membuktikan pendaftaran universitas. Sementara Verifikasi KTM mengonfirmasi sinyal keaktifan mahasiswa di 33 perguruan tinggi Semarang (kuota 50 like/hari). Keduanya ditinjau manual oleh admin secara terpisah.',
+      q: 'Apakah NIVA menyimpan video call?',
+      a: 'NIVA tidak melakukan perekaman video call secara otomatis. Arsitektur WebRTC kami beroperasi secara langsung antar-browser (peer-to-peer). Server hanya menangani proses signaling/matchmaking dan tidak menyimpan aliran audio maupun video.',
     },
     {
-      q: 'Berapa kuota like harian untuk pengguna gratis?',
-      a: 'Pengguna yang belum terverifikasi mendapatkan 10 like per hari. Setelah lulus Verifikasi Foto atau Verifikasi KTM, kuota like Anda meningkat otomatis menjadi 50 like per hari.',
+      q: 'Apakah saya harus memberikan KTM?',
+      a: 'KTM tidak diperlukan untuk Stranger Chat dan Stranger Cam. Verifikasi KTM digunakan khusus untuk ekosistem akun terverifikasi seperti Telegram Bot NIVA dan NIVA Dating Apps yang membutuhkan identitas mahasiswa tervalidasi.',
     },
     {
-      q: 'Bagaimana cara mendaftar langganan NIVA Premium?',
-      a: 'Pembelian Premium dilakukan secara resmi melalui website NIVA pada halaman Premium. Anda memilih paket (Early Access Rp5.000 atau Early Launch Rp8.000), melakukan transfer/QRIS, dan mengunggah bukti pembayaran untuk diverifikasi tim admin melalui antrean FIFO.',
+      q: 'Apakah Stranger Chat aman?',
+      a: 'NIVA menerapkan sistem sensor kontak otomatis (anti-scam), penyaringan nomor telepon, rate limiting, Three-Strike enforcement, serta tombol Report dan Block seketika. Meskipun demikian, tidak ada platform online dengan risiko nol, sehingga Anda disarankan untuk tidak membagikan informasi pribadi kepada orang asing.',
     },
     {
-      q: 'Apakah data NIM atau foto kartu mahasiswa saya akan terlihat oleh pengguna lain?',
-      a: 'Sama sekali tidak. Foto kartu mahasiswa Anda disimpan sementara secara terenkripsi dan dihapus secara otomatis maksimal 72 jam. Data sensitif seperti NIM, nomor telepon, dan email tidak pernah dipublikasikan kepada pengguna lain.',
-    },
-    {
-      q: 'Mengapa NIVA dijalankan melalui Telegram Bot?',
-      a: 'Telegram menyediakan infrastruktur yang sangat cepat, ringan, aman, dan mudah diakses di smartphone Android maupun iOS tanpa perlu mengunduh aplikasi pihak ketiga yang membebani memori ponsel Anda.',
+      q: 'Bagaimana jika saya mengalami pelecehan?',
+      a: 'Gunakan fitur Report dan Block seketika untuk memutus koneksi dan mencatat laporan ke antrean moderasi. Jika Anda membutuhkan bantuan lebih lanjut atau terjadi ancaman darurat, simpan tangkapan layar bukti dan hubungi admin melalui kanal resmi NIVA atau otoritas darurat terkait.',
     },
   ];
 
@@ -77,17 +67,18 @@ export default function HomePage() {
   return (
     <div className="space-y-24 md:space-y-32 pb-24 overflow-hidden">
       <JsonLd data={jsonLdFaq} />
+
       {/* 1. HERO SECTION */}
-      <section className="relative pt-12 md:pt-18 pb-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+      <section className="relative pt-12 md:pt-20 pb-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         <div className="text-center max-w-4xl mx-auto space-y-7">
-          {/* Official Brand Identity Logo Presentation */}
+          {/* Brand Identity Badge */}
           <div className="flex justify-center animate-fadeIn">
             <div className="inline-flex items-center gap-3.5 px-5 py-2.5 rounded-2xl bg-white shadow-soft border border-[#5B3A6D]/15 hover:border-[#5B3A6D]/30 transition-all hover:shadow-card">
               <Image
                 src="/logo-icon.png"
                 alt="NIVA Logo"
-                width={44}
-                height={44}
+                width={40}
+                height={40}
                 className="object-contain"
                 priority
               />
@@ -95,351 +86,400 @@ export default function HomePage() {
                 <div className="font-display font-black text-2xl tracking-tight leading-none text-[#3B123F]">
                   NIVA
                 </div>
-                <div className="text-[11px] font-medium text-[#8A5A9A] tracking-wider uppercase">
-                  Meet someone worth knowing.
+                <div className="text-[11px] font-semibold text-[#8A5A9A] tracking-wider uppercase">
+                  Semarang Community Platform
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Tag Pill */}
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#5B3A6D]/10 border border-[#5B3A6D]/20 text-[#5B3A6D] text-xs sm:text-sm font-semibold tracking-wide">
-            <Sparkles className="w-4 h-4 text-[#8A5A9A]" />
-            <span>Built for students across {FIXED_INSTITUTION_COUNT} higher-education institutions in Semarang</span>
+          {/* Core Feature Badges */}
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs font-semibold text-[#5B3A6D]">
+            <span className="px-3 py-1 rounded-full bg-[#5B3A6D]/10 border border-[#5B3A6D]/20">18+ Only</span>
+            <span className="px-3 py-1 rounded-full bg-[#5B3A6D]/10 border border-[#5B3A6D]/20">Semarang Community</span>
+            <span className="px-3 py-1 rounded-full bg-[#5B3A6D]/10 border border-[#5B3A6D]/20">1-on-1</span>
+            <span className="px-3 py-1 rounded-full bg-[#5B3A6D]/10 border border-[#5B3A6D]/20">Privacy First</span>
+            <span className="px-3 py-1 rounded-full bg-[#5B3A6D]/10 border border-[#5B3A6D]/20">Moderated</span>
           </div>
 
           {/* Main H1 Heading */}
           <h1 className="text-4xl sm:text-6xl lg:text-7xl font-display font-extrabold text-[#17151A] tracking-tight leading-[1.1]">
-            Meet Someone Worth Knowing in{' '}
+            Meet a Stranger.{' '}
             <span className="bg-gradient-to-r from-[#5B3A6D] via-[#8A5A9A] to-[#E8B4C8] bg-clip-text text-transparent">
-              Semarang.
+              Start a Conversation.
             </span>
           </h1>
 
-          {/* Supporting Copy */}
+          {/* Supporting Subheadline */}
           <p className="text-lg sm:text-xl text-[#68626D] max-w-2xl mx-auto leading-relaxed font-normal">
-            NIVA adalah platform sosial dan matchmaking berbasis mahasiswa yang dirancang untuk komunitas kampus di Semarang. Temukan teman dengan minat yang sama, terhubung lewat mutual connection, dan mulai percakapan dalam ruang yang lebih aman serta terverifikasi.
+            Stranger Chat dan Stranger Cam 1-on-1 untuk komunitas Semarang. Masuk tanpa registrasi, temukan orang yang sedang online, dan ngobrol dengan privacy-first protection.
           </p>
 
-          {/* Primary & Secondary CTA */}
+          {/* Primary Dual CTAs */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
-            <a
-              href={SITE_CONFIG.telegramBotUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              href="/stranger-chat"
               className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-8 py-4 rounded-full text-base font-bold text-white bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] hover:opacity-95 shadow-card hover:shadow-hover transition-all transform hover:-translate-y-0.5"
             >
-              <Send className="w-5 h-5" />
-              <span>Join NIVA on Telegram</span>
-            </a>
+              <MessageSquare className="w-5 h-5" />
+              <span>Start Stranger Chat</span>
+            </Link>
+
             <Link
-              href="/how-it-works"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-4 rounded-full text-base font-semibold text-[#17151A] bg-white hover:bg-[#FAF8F6] border border-[#5B3A6D]/20 shadow-sm transition-all"
+              href="/stranger-cam"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-8 py-4 rounded-full text-base font-bold text-[#17151A] bg-white hover:bg-[#FAF8F6] border border-[#5B3A6D]/20 shadow-sm transition-all transform hover:-translate-y-0.5"
             >
-              <span>See How It Works</span>
-              <ArrowRight className="w-4 h-4 text-[#5B3A6D]" />
+              <Video className="w-5 h-5 text-[#5B3A6D]" />
+              <span>Open Stranger Cam</span>
             </Link>
           </div>
 
-          {/* Live Product Metrics Bar (Real Data Sourced from Database) */}
+          {/* Live System Metrics Bar */}
           <LiveStatsBar />
-
-          {/* Trust Indicators */}
-          <div className="pt-8 border-t border-[#5B3A6D]/10 grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
-            <div className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/60 border border-[#5B3A6D]/5">
-              <ShieldCheck className="w-5 h-5 text-[#5B3A6D]" />
-              <span className="text-xs sm:text-sm font-semibold text-[#17151A]">18+ Only</span>
-              <span className="text-[11px] text-[#68626D]">Khusus dewasa muda</span>
-            </div>
-            <div className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/60 border border-[#5B3A6D]/5">
-              <UserCheck className="w-5 h-5 text-[#2D8C6A]" />
-              <span className="text-xs sm:text-sm font-semibold text-[#17151A]">Student Verification</span>
-              <span className="text-[11px] text-[#68626D]">Sinyal status KTM</span>
-            </div>
-            <div className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/60 border border-[#5B3A6D]/5">
-              <Lock className="w-5 h-5 text-[#8A5A9A]" />
-              <span className="text-xs sm:text-sm font-semibold text-[#17151A]">Privacy-First</span>
-              <span className="text-[11px] text-[#68626D]">NIM & kontak terlindungi</span>
-            </div>
-            <div className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/60 border border-[#5B3A6D]/5">
-              <Flag className="w-5 h-5 text-[#C94B5B]" />
-              <span className="text-xs sm:text-sm font-semibold text-[#17151A]">Safety Controls</span>
-              <span className="text-[11px] text-[#68626D]">Lapor & blokir instan</span>
-            </div>
-          </div>
         </div>
       </section>
 
-      {/* 2. VERIFICATION TIERS & LIKE LIMITS */}
+      {/* 2. HOW IT WORKS */}
       <section className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         <div className="text-center max-w-3xl mx-auto mb-16 space-y-4">
-          <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#8A5A9A]">
-            Tingkat Kepercayaan & Kuota Like
-          </h2>
-          <p className="text-3xl sm:text-4xl font-display font-bold text-[#17151A] tracking-tight">
-            Transparansi Verifikasi & Batasan Server-Side
-          </p>
-          <p className="text-base text-[#68626D]">
-            NIVA menerapkan sistem kuota harian otomatis di tingkat server untuk mencegah penyalahgunaan dan menjaga kualitas interaksi antar-mahasiswa.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {/* Level 0 */}
-          <div className="bg-white p-8 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-[#68626D] bg-[#FAF8F6] px-3 py-1 rounded-full border">Level 0</span>
-              <span className="text-xs font-bold text-[#17151A]">10 Like / Hari</span>
-            </div>
-            <h3 className="text-xl font-bold text-[#17151A]">Unverified</h3>
-            <p className="text-xs text-[#68626D] leading-relaxed">
-              Pengguna baru yang telah menyelesaikan onboarding dasar dan verifikasi usia 18+. Dapat menjelajahi feed dan mengirimkan hingga 10 like per hari.
-            </p>
-          </div>
-
-          {/* Level 1 */}
-          <div className="bg-white p-8 rounded-2xl border border-[#8A5A9A]/30 shadow-card space-y-4 relative">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-[#8A5A9A] bg-[#8A5A9A]/10 px-3 py-1 rounded-full border border-[#8A5A9A]/20">Level 1</span>
-              <span className="text-xs font-bold text-[#2D8C6A]">50 Like / Hari</span>
-            </div>
-            <h3 className="text-xl font-bold text-[#17151A] flex items-center gap-2">
-              <Camera className="w-5 h-5 text-[#8A5A9A]" /> Photo Verified
-            </h3>
-            <p className="text-xs text-[#68626D] leading-relaxed">
-              Telah lulus verifikasi foto selfie wajah asli oleh tim admin. Memastikan profil bukan bot atau foto curian, tanpa perlu menunjukkan kartu mahasiswa.
-            </p>
-          </div>
-
-          {/* Level 2 */}
-          <div className="bg-white p-8 rounded-2xl border border-[#2D8C6A]/30 shadow-card space-y-4 relative">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-[#2D8C6A] bg-[#2D8C6A]/10 px-3 py-1 rounded-full border border-[#2D8C6A]/20">Level 2</span>
-              <span className="text-xs font-bold text-[#2D8C6A]">50 Like / Hari</span>
-            </div>
-            <h3 className="text-xl font-bold text-[#17151A] flex items-center gap-2">
-              <GraduationCap className="w-5 h-5 text-[#2D8C6A]" /> Student Verified
-            </h3>
-            <p className="text-xs text-[#68626D] leading-relaxed">
-              Telah diverifikasi menggunakan Kartu Tanda Mahasiswa (KTM) di salah satu dari 33 perguruan tinggi Semarang. Lencana verifikasi kampus resmi aktif.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* 3. NIVA PREMIUM SECTION */}
-      <section className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-        <div className="bg-gradient-to-br from-[#5B3A6D] via-[#734882] to-[#8A5A9A] text-white p-8 sm:p-14 rounded-3xl shadow-hover space-y-10">
-          <div className="text-center max-w-2xl mx-auto space-y-3">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 text-white text-xs font-bold">
-              <Sparkles className="w-4 h-4" />
-              <span>NIVA Premium Membership</span>
-            </div>
-            <h2 className="text-3xl sm:text-4xl font-display font-bold">
-              Unlock More Ways to Connect.
-            </h2>
-            <p className="text-sm sm:text-base text-white/90">
-              Dapatkan kuota interaksi ekstra, lencana eksklusif, dan kemampuan rewind untuk memperluas pertemanan secara maksimal.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-3xl mx-auto">
-            {/* Early Access Card */}
-            <div className="bg-white/10 backdrop-blur-md p-6 rounded-2xl border border-white/20 space-y-4 flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider bg-[#E8B4C8] text-[#17151A] px-2.5 py-1 rounded-full">
-                  EARLY ACCESS
-                </span>
-                <h3 className="text-2xl font-bold mt-3">Rp5.000 <span className="text-xs font-normal text-white/80">/ 1 bulan</span></h3>
-                <p className="text-xs text-white/80 mt-1">Paket peluncuran terbatas untuk mahasiswa pertama.</p>
-              </div>
-              <Link
-                href="/premium"
-                className="w-full text-center py-2.5 rounded-xl font-bold text-xs bg-white text-[#17151A] hover:bg-[#FAF8F6] transition-all shadow-sm"
-              >
-                Dapatkan Early Access →
-              </Link>
-            </div>
-
-            {/* Early Launch Card */}
-            <div className="bg-white/10 backdrop-blur-md p-6 rounded-2xl border border-white/20 space-y-4 flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider bg-white/30 text-white px-2.5 py-1 rounded-full">
-                  EARLY LAUNCH
-                </span>
-                <h3 className="text-2xl font-bold mt-3">Rp8.000 <span className="text-xs font-normal text-white/80">/ 1 bulan</span></h3>
-                <p className="text-xs text-white/80 mt-1">Paket standar fase peluncuran resmi berikutnya.</p>
-              </div>
-              <Link
-                href="/premium"
-                className="w-full text-center py-2.5 rounded-xl font-bold text-xs bg-white text-[#17151A] hover:bg-[#FAF8F6] transition-all shadow-sm"
-              >
-                Dapatkan Early Launch →
-              </Link>
-            </div>
-          </div>
-
-          <div className="text-center pt-2">
-            <Link
-              href="/premium"
-              className="inline-flex items-center gap-2 text-sm font-semibold text-white/90 hover:text-white underline underline-offset-4"
-            >
-              <span>Lihat Detail Fitur & Alur Pembayaran di Halaman Premium</span>
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* 4. SEMARANG STUDENT COMMUNITY (33 INSTITUTIONS FIXED) */}
-      <section className="bg-white py-20 border-y border-[#5B3A6D]/10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-3xl mx-auto mb-12 space-y-4">
-            <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#8A5A9A]">
-              Ekosistem Pendidikan Tinggi
-            </h2>
-            <p className="text-3xl sm:text-4xl font-display font-bold text-[#17151A] tracking-tight">
-              Dirancang untuk Mahasiswa di Seluruh {FIXED_INSTITUTION_COUNT} Perguruan Tinggi Semarang.
-            </p>
-            <p className="text-base text-[#68626D]">
-              NIVA dirancang untuk melayani mahasiswa dari {FIXED_INSTITUTION_COUNT} institusi perguruan tinggi negeri, swasta, kedinasan, dan kesehatan di wilayah Semarang secara inklusif.
-            </p>
-          </div>
-
-          {/* University Tags Grid */}
-          <div className="flex flex-wrap justify-center gap-2.5 max-w-5xl mx-auto">
-            {SEMARANG_INSTITUTIONS.slice(0, 24).map((inst) => (
-              <span
-                key={inst.shortName}
-                className="px-3.5 py-1.5 rounded-full bg-[#FAF8F6] border border-[#5B3A6D]/15 text-xs font-medium text-[#17151A] hover:border-[#5B3A6D] transition-colors"
-                title={`${inst.fullName} (${inst.area})`}
-              >
-                {inst.shortName}
-              </span>
-            ))}
-            <Link
-              href="/students/semarang"
-              className="px-3.5 py-1.5 rounded-full bg-[#5B3A6D]/10 text-xs font-semibold text-[#5B3A6D] hover:bg-[#5B3A6D]/20 transition-colors"
-            >
-              Lihat Seluruh {FIXED_INSTITUTION_COUNT} Kampus Semarang →
-            </Link>
-          </div>
-
-          <div className="mt-8 text-center text-xs text-[#68626D] max-w-2xl mx-auto">
-            <p>
-              *Penyebutan nama {FIXED_INSTITUTION_COUNT} perguruan tinggi bertujuan murni sebagai referensi almamater mahasiswa di Kota Semarang dan tidak mengindikasikan adanya afiliasi formal atau kemitraan komersial dengan pihak kampus.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* 5. COMING SOON: NIVA STRANGER CAM */}
-      <StrangerCamComingSoon />
-
-      {/* 6. GENUINE REVIEWS SECTION (Section 33) */}
-      <section className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto py-12">
-        <div className="text-center mb-10 space-y-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#8A5A9A]/10 text-[#8A5A9A] text-xs font-bold">
-            <Star className="w-3.5 h-3.5 fill-[#8A5A9A]" />
-            <span>Transparansi & Ulasan Mahasiswa</span>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#8A5A9A]/10 text-[#8A5A9A] text-xs font-bold uppercase tracking-wider">
+            <Compass className="w-4 h-4" />
+            <span>Alur Penggunaan</span>
           </div>
           <h2 className="text-3xl sm:text-4xl font-display font-bold text-[#17151A] tracking-tight">
-            What students are saying
+            How It Works
           </h2>
-          <p className="text-sm sm:text-base text-[#68626D] max-w-xl mx-auto">
-            Pendapat dan pengalaman jujur dari mahasiswa Semarang yang telah terverifikasi di platform NIVA.
+          <p className="text-base text-[#68626D]">
+            Empat langkah sederhana untuk terhubung secara anonim dan aman di Kota Semarang.
           </p>
         </div>
 
-        {reviewsData.reviews.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {reviewsData.reviews.map((rev) => (
-              <div
-                key={rev.id}
-                className="bg-white p-6 rounded-2xl border border-[#5B3A6D]/15 shadow-soft space-y-4 flex flex-col justify-between"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center gap-1 text-[#8A5A9A]">
-                    {[1, 2, 3, 4, 5].map((s) => (
-                      <Star
-                        key={s}
-                        className={`w-4 h-4 ${
-                          s <= rev.rating ? 'fill-[#8A5A9A] text-[#8A5A9A]' : 'text-gray-200'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                  <p className="text-sm text-[#17151A] italic leading-relaxed">
-                    &quot;{rev.review_text}&quot;
-                  </p>
-                </div>
-                <div className="pt-4 border-t border-gray-100 flex items-center justify-between text-xs">
-                  <div>
-                    <p className="font-bold text-[#17151A]">{rev.display_name}</p>
-                    <p className="text-[#68626D]">{rev.institution_short_name || 'Mahasiswa Semarang'}</p>
-                  </div>
-                  <span className="text-[10px] text-[#2D8C6A] bg-[#2D8C6A]/10 px-2 py-0.5 rounded-full font-semibold">
-                    Verified
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="bg-white p-10 rounded-2xl border border-dashed border-[#5B3A6D]/20 text-center max-w-2xl mx-auto space-y-4 shadow-soft">
-            <div className="w-12 h-12 rounded-full bg-[#8A5A9A]/10 text-[#8A5A9A] flex items-center justify-center mx-auto">
-              <MessageSquare className="w-6 h-6" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          {/* Step 1 */}
+          <div className="bg-white p-7 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-3 relative group hover:border-[#8A5A9A]/40 transition-all">
+            <div className="w-12 h-12 rounded-xl bg-[#5B3A6D]/10 text-[#5B3A6D] flex items-center justify-center font-bold text-lg">
+              1
             </div>
-            <h3 className="text-lg font-bold text-[#17151A]">
-              Be among the first to share your NIVA experience.
-            </h3>
-            <p className="text-xs text-[#68626D] max-w-md mx-auto leading-relaxed">
-              NIVA berkomitmen untuk tidak pernah memalsukan ulasan atau merekayasa skor bintang demi promosi. Semua testimoni murni bersumber dari mahasiswa yang diverifikasi.
+            <h3 className="text-xl font-bold text-[#17151A]">Enter</h3>
+            <p className="text-xs text-[#68626D] leading-relaxed">
+              Cukup konfirmasi usia 18+ dan domisili Semarang di browser. Tanpa registrasi akun, tanpa mengisi form identitas pribadi.
             </p>
-            <div className="pt-2">
-              <Link
-                href="/reviews"
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#5B3A6D] text-white text-xs font-bold hover:bg-[#482D57] transition-all shadow-sm"
-              >
-                <span>Tulis Ulasan Pengalaman Anda</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
           </div>
-        )}
 
-        <div className="text-center pt-8">
-          <Link
-            href="/reviews"
-            className="inline-flex items-center gap-2 text-xs font-bold text-[#5B3A6D] hover:text-[#8A5A9A] transition-colors"
-          >
-            <span>Buka Halaman Ulasan Publik & Statistik Rating Lengkap</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
+          {/* Step 2 */}
+          <div className="bg-white p-7 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-3 relative group hover:border-[#8A5A9A]/40 transition-all">
+            <div className="w-12 h-12 rounded-xl bg-[#8A5A9A]/10 text-[#8A5A9A] flex items-center justify-center font-bold text-lg">
+              2
+            </div>
+            <h3 className="text-xl font-bold text-[#17151A]">Get Matched</h3>
+            <p className="text-xs text-[#68626D] leading-relaxed">
+              Sistem matchmaking otomatis memasangkan Anda secara acak 1-on-1 dengan sesama pengguna yang sedang online di area Semarang.
+            </p>
+          </div>
+
+          {/* Step 3 */}
+          <div className="bg-white p-7 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-3 relative group hover:border-[#8A5A9A]/40 transition-all">
+            <div className="w-12 h-12 rounded-xl bg-[#2D8C6A]/10 text-[#2D8C6A] flex items-center justify-center font-bold text-lg">
+              3
+            </div>
+            <h3 className="text-xl font-bold text-[#17151A]">Start Talking</h3>
+            <p className="text-xs text-[#68626D] leading-relaxed">
+              Ngobrol lewat teks yang dilindungi anti-scam atau video WebRTC peer-to-peer berkualitas tinggi dengan proteksi privasi mutakhir.
+            </p>
+          </div>
+
+          {/* Step 4 */}
+          <div className="bg-white p-7 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-3 relative group hover:border-[#8A5A9A]/40 transition-all">
+            <div className="w-12 h-12 rounded-xl bg-[#C94B5B]/10 text-[#C94B5B] flex items-center justify-center font-bold text-lg">
+              4
+            </div>
+            <h3 className="text-xl font-bold text-[#17151A]">Skip Anytime</h3>
+            <p className="text-xs text-[#68626D] leading-relaxed">
+              Jika percakapan tidak sesuai minat atau partner tidak responsif, lewati partner kapan saja dengan tombol Skip tanpa batasan.
+            </p>
+          </div>
         </div>
       </section>
 
-      {/* 6. FAQ SECTION */}
-      <section className="px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto">
-        <div className="text-center mb-16 space-y-4">
-          <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#8A5A9A]">
-            Pertanyaan Umum
+      {/* 3. STRANGER CHAT SHOWCASE */}
+      <section className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div className="bg-gradient-to-br from-white via-[#FAF8F6] to-white p-8 sm:p-12 rounded-3xl border border-[#5B3A6D]/15 shadow-soft grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
+          <div className="space-y-5">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#8A5A9A]/10 text-[#8A5A9A] text-xs font-bold">
+              <MessageSquare className="w-4 h-4" />
+              <span>Stranger Chat Semarang</span>
+            </div>
+            <h2 className="text-3xl sm:text-4xl font-display font-bold text-[#17151A] tracking-tight">
+              Obrolan Teks Acak 1-on-1 Tanpa Akun
+            </h2>
+            <p className="text-sm sm:text-base text-[#68626D] leading-relaxed">
+              NIVA Stranger Chat memungkinkan pengguna dewasa di komunitas Semarang bertemu secara acak dan memulai percakapan 1-on-1 tanpa harus membuat akun.
+            </p>
+            <div className="space-y-3 text-xs sm:text-sm text-[#68626D]">
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-[#2D8C6A] shrink-0 mt-0.5" />
+                <span><strong>Multi-Stage Server Moderation:</strong> Pembersihan Unicode homoglyph dan deteksi pola teks tersembunyi (S1OT G4C0R, variasi nomor WhatsApp).</span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-[#2D8C6A] shrink-0 mt-0.5" />
+                <span><strong>Perlindungan Nomor HP:</strong> Penyensoran otomatis nomor telepon (+62/08) demi mencegah tindak penipuan finansial.</span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-[#2D8C6A] shrink-0 mt-0.5" />
+                <span><strong>Zero Plaintext Storage:</strong> Isi pesan hanya berada di memori transport aktif dan tidak disimpan dalam database.</span>
+              </div>
+            </div>
+            <div className="pt-2">
+              <Link
+                href="/stranger-chat"
+                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-full font-bold text-sm text-white bg-[#5B3A6D] hover:bg-[#8A5A9A] shadow-md transition-all"
+              >
+                <span>Start Stranger Chat</span>
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          </div>
+
+          <div className="bg-[#17151A] text-white p-6 sm:p-8 rounded-2xl border border-white/10 space-y-4 shadow-card">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs font-semibold text-gray-200">Stranger Session (Semarang)</span>
+              </div>
+              <span className="text-[10px] text-gray-400 font-mono bg-white/10 px-2 py-0.5 rounded">EPHEMERAL</span>
+            </div>
+            <div className="space-y-3 text-xs">
+              <div className="bg-white/10 p-3 rounded-xl max-w-[85%] text-gray-200">
+                Halo! Kuliah atau kerja di daerah Semarang mana?
+              </div>
+              <div className="bg-[#5B3A6D]/70 p-3 rounded-xl max-w-[85%] ml-auto text-white">
+                Hai! Di Tembalang nih, salam kenal ya!
+              </div>
+              <div className="bg-amber-500/20 border border-amber-400/30 p-2.5 rounded-lg text-amber-200 text-[11px] flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-amber-300 shrink-0" />
+                <span>Anti-Scam Filter aktif. Partner hanya melihat sebutan &ldquo;Stranger&rdquo;.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 4. STRANGER CAM SHOWCASE */}
+      <section className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div className="bg-gradient-to-br from-white via-[#FAF8F6] to-white p-8 sm:p-12 rounded-3xl border border-[#5B3A6D]/15 shadow-soft grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
+          <div className="order-2 lg:order-1 bg-[#17151A] text-white p-6 sm:p-8 rounded-2xl border border-white/10 space-y-4 shadow-card">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs font-semibold text-gray-200">WebRTC Video 1-on-1</span>
+              </div>
+              <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30">
+                ZERO RECORDING
+              </span>
+            </div>
+            <div className="aspect-video bg-white/5 rounded-xl border border-white/10 flex flex-col items-center justify-center gap-3 p-6 text-center">
+              <Video className="w-10 h-10 text-[#8A5A9A]" />
+              <div className="space-y-1">
+                <p className="text-xs font-bold text-white">Peer-to-Peer Encrypted Stream</p>
+                <p className="text-[11px] text-gray-400 max-w-xs">
+                  Video dan audio diproses langsung di perangkat Anda tanpa pipeline rekaman server.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1">
+              <span>● Deteksi Wajah Lokal di Browser</span>
+              <span>● Skip / Block Seketika</span>
+            </div>
+          </div>
+
+          <div className="order-1 lg:order-2 space-y-5">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#5B3A6D]/10 text-[#5B3A6D] text-xs font-bold">
+              <Video className="w-4 h-4" />
+              <span>Stranger Cam Semarang</span>
+            </div>
+            <h2 className="text-3xl sm:text-4xl font-display font-bold text-[#17151A] tracking-tight">
+              Real-Time Browser Video Conversation
+            </h2>
+            <p className="text-sm sm:text-base text-[#68626D] leading-relaxed">
+              NIVA Stranger Cam mempertemukan pengguna dewasa secara acak melalui browser menggunakan koneksi video 1-on-1. Kamera dan mikrofon digunakan untuk sesi aktif dan NIVA tidak melakukan perekaman otomatis.
+            </p>
+            <div className="space-y-3 text-xs sm:text-sm text-[#68626D]">
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-[#2D8C6A] shrink-0 mt-0.5" />
+                <span><strong>WebRTC Peer-to-Peer:</strong> Koneksi video langsung antar peramban dengan enkripsi DTLS/SRTP standar industri.</span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-[#2D8C6A] shrink-0 mt-0.5" />
+                <span><strong>No Automatic Recording:</strong> Server tidak merekam, menyimpan, atau mengunggah panggilan video Anda ke penyimpanan apa pun.</span>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-[#2D8C6A] shrink-0 mt-0.5" />
+                <span><strong>Kontrol Keamanan Penuh:</strong> Tombol Skip untuk berganti partner seketika, serta Report & Block saat terjadi pelanggaran.</span>
+              </div>
+            </div>
+            <div className="pt-2">
+              <Link
+                href="/stranger-cam"
+                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-full font-bold text-sm text-[#17151A] bg-white hover:bg-[#FAF8F6] border border-[#5B3A6D]/20 shadow-sm transition-all"
+              >
+                <span>Open Stranger Cam</span>
+                <ArrowRight className="w-4 h-4 text-[#5B3A6D]" />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 5. TRUST SECTION — BUILT FOR SAFER CONVERSATIONS */}
+      <section className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div className="text-center max-w-3xl mx-auto mb-16 space-y-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#5B3A6D]/10 text-[#5B3A6D] text-xs font-bold uppercase tracking-wider">
+            <ShieldCheck className="w-4 h-4" />
+            <span>Standar Keamanan Platform</span>
+          </div>
+          <h2 className="text-3xl sm:text-4xl font-display font-bold text-[#17151A] tracking-tight">
+            Built for Safer Conversations
           </h2>
-          <p className="text-3xl sm:text-4xl font-display font-bold text-[#17151A] tracking-tight">
-            Jawaban untuk Pertanyaan Anda
+          <p className="text-base text-[#68626D]">
+            Designed with privacy and safety controls. Kami mengutamakan pencegahan penyalahgunaan dan perlindungan data pengguna.
           </p>
         </div>
 
-        <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {/* Pillar 1 */}
+          <div className="bg-white p-7 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-3">
+            <div className="w-11 h-11 rounded-xl bg-[#5B3A6D]/10 text-[#5B3A6D] flex items-center justify-center">
+              <UserCheck className="w-5 h-5" />
+            </div>
+            <h3 className="text-lg font-bold text-[#17151A]">18+ Only</h3>
+            <p className="text-xs text-[#68626D] leading-relaxed">
+              Dirancang untuk pengguna dewasa muda. Akses dibatasi secara tegas bagi pengguna di bawah umur demi mematuhi regulasi digital.
+            </p>
+          </div>
+
+          {/* Pillar 2 */}
+          <div className="bg-white p-7 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-3">
+            <div className="w-11 h-11 rounded-xl bg-[#8A5A9A]/10 text-[#8A5A9A] flex items-center justify-center">
+              <Users className="w-5 h-5" />
+            </div>
+            <h3 className="text-lg font-bold text-[#17151A]">Semarang Community</h3>
+            <p className="text-xs text-[#68626D] leading-relaxed">
+              Matchmaking dibatasi pada komunitas yang memenuhi eligibility Semarang tanpa pernah mengekspos koordinat GPS presisi kepada partner.
+            </p>
+          </div>
+
+          {/* Pillar 3 */}
+          <div className="bg-white p-7 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-3">
+            <div className="w-11 h-11 rounded-xl bg-[#2D8C6A]/10 text-[#2D8C6A] flex items-center justify-center">
+              <Lock className="w-5 h-5" />
+            </div>
+            <h3 className="text-lg font-bold text-[#17151A]">1-on-1</h3>
+            <p className="text-xs text-[#68626D] leading-relaxed">
+              Percakapan dilakukan secara private antar dua pengguna langsung, tanpa perantara, ruang publik, atau penonton luar.
+            </p>
+          </div>
+
+          {/* Pillar 4 */}
+          <div className="bg-white p-7 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-3">
+            <div className="w-11 h-11 rounded-xl bg-[#E8B4C8]/30 text-[#8A5A9A] flex items-center justify-center">
+              <Video className="w-5 h-5" />
+            </div>
+            <h3 className="text-lg font-bold text-[#17151A]">No Automatic Recording</h3>
+            <p className="text-xs text-[#68626D] leading-relaxed">
+              NIVA tidak merekam video call secara otomatis. Server kami tidak memiliki sistem penyimpanan untuk media audio maupun video.
+            </p>
+          </div>
+
+          {/* Pillar 5 */}
+          <div className="bg-white p-7 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-3">
+            <div className="w-11 h-11 rounded-xl bg-[#C94B5B]/10 text-[#C94B5B] flex items-center justify-center">
+              <Flag className="w-5 h-5" />
+            </div>
+            <h3 className="text-lg font-bold text-[#17151A]">Report & Block</h3>
+            <p className="text-xs text-[#68626D] leading-relaxed">
+              Pengguna dapat menghentikan percakapan dan melaporkan penyalahgunaan. Akun yang melanggar ditindak melalui moderasi server.
+            </p>
+          </div>
+
+          {/* Pillar 6 */}
+          <div className="bg-white p-7 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-3">
+            <div className="w-11 h-11 rounded-xl bg-purple-50 text-[#8A5A9A] flex items-center justify-center">
+              <EyeOff className="w-5 h-5" />
+            </div>
+            <h3 className="text-lg font-bold text-[#17151A]">Privacy First</h3>
+            <p className="text-xs text-[#68626D] leading-relaxed">
+              Data yang tidak diperlukan tidak dikumpulkan. Tanpa nama asli, tanpa email, dan tanpa password untuk fitur Stranger Chat & Cam.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* 6. COMING SOON — NIVA DATING APPS */}
+      <section className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div className="bg-gradient-to-br from-[#3B123F] via-[#5B3A6D] to-[#8A5A9A] text-white p-8 sm:p-14 rounded-3xl shadow-hover space-y-8 relative overflow-hidden">
+          <div className="text-center max-w-3xl mx-auto space-y-4 relative z-10">
+            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-white/20 text-[#E8B4C8] text-xs font-bold tracking-wider uppercase backdrop-blur-md">
+              <Sparkles className="w-4 h-4" />
+              <span>Coming Soon</span>
+            </div>
+
+            <h2 className="text-3xl sm:text-5xl font-display font-black tracking-tight leading-tight">
+              NIVA Dating Apps
+            </h2>
+
+            <p className="text-lg sm:text-xl font-semibold text-[#E8B4C8]">
+              Meet Someone Worth Knowing in Semarang.
+            </p>
+
+            <p className="text-sm sm:text-base text-white/90 max-w-2xl mx-auto leading-relaxed">
+              NIVA Dating Apps sedang dipersiapkan untuk membantu pengguna menemukan teman, koneksi, atau pasangan dengan pendekatan yang lebih terverifikasi.
+              Pengguna akan melalui verifikasi KTM berbasis AI dan manual review sebelum mendapatkan akses ke fitur dating.
+              Kami membangun sistem dengan fokus pada privacy, verification, anti-scam, dan mekanisme report & block.
+            </p>
+
+            {/* Architecture Flow Badges */}
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-2 text-[11px] sm:text-xs font-medium text-white/80">
+              <span className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/15">Coming Soon</span>
+              <span>→</span>
+              <span className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/15">Register Interest</span>
+              <span>→</span>
+              <span className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/15">KTM Verification</span>
+              <span>→</span>
+              <span className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/15">AI + Manual Review</span>
+              <span>→</span>
+              <span className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/15">Verified Profile</span>
+            </div>
+
+            <div className="text-xs font-bold text-[#E8B4C8] pt-1">
+              Verified people. Real connections. Safer dating.
+            </div>
+          </div>
+
+          {/* Interactive Waitlist Subscription Component */}
+          <div className="relative z-10 pt-2">
+            <DatingWaitlistForm />
+          </div>
+        </div>
+      </section>
+
+      {/* 7. FAQ SECTION */}
+      <section className="px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto space-y-10">
+        <div className="text-center space-y-3">
+          <h2 className="text-3xl font-display font-bold text-[#17151A] tracking-tight">
+            Pertanyaan yang Sering Diajukan (FAQ)
+          </h2>
+          <p className="text-sm text-[#68626D]">
+            Informasi faktual dan transparan mengenai operasional platform NIVA di Semarang.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {faqs.map((faq, idx) => (
-            <div
-              key={idx}
-              className="bg-white p-6 sm:p-8 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-2"
-            >
-              <h3 className="text-base sm:text-lg font-bold text-[#17151A]">
+            <div key={idx} className="bg-white p-6 rounded-2xl border border-[#5B3A6D]/10 shadow-soft space-y-2.5">
+              <h3 className="text-sm font-bold text-[#17151A] leading-snug">
                 {faq.q}
               </h3>
-              <p className="text-sm text-[#68626D] leading-relaxed">
+              <p className="text-xs text-[#68626D] leading-relaxed">
                 {faq.a}
               </p>
             </div>
@@ -447,28 +487,15 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 6. FINAL CTA */}
-      <section className="px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto text-center">
-        <div className="bg-gradient-to-br from-[#5B3A6D] via-[#734882] to-[#8A5A9A] text-white p-12 sm:p-16 rounded-3xl shadow-hover space-y-6">
-          <h2 className="text-3xl sm:text-5xl font-display font-bold tracking-tight">
-            Meet someone worth knowing.
-          </h2>
-          <p className="text-base sm:text-lg text-white/90 max-w-xl mx-auto leading-relaxed">
-            Bergabunglah dengan mahasiswa Semarang lainnya di NIVA sekarang juga. Verifikasi identitas Anda dan mulailah berkenalan dalam hitungan menit.
-          </p>
-          <div className="pt-4">
-            <a
-              href={SITE_CONFIG.telegramBotUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-3 px-8 py-4 rounded-full text-base font-bold text-[#17151A] bg-white hover:bg-[#FAF8F6] shadow-md transition-all transform hover:-translate-y-0.5"
-            >
-              <Send className="w-5 h-5 text-[#5B3A6D]" />
-              <span>Join NIVA on Telegram</span>
-            </a>
+      {/* 8. SAFETY & EMERGENCY NOTICE */}
+      <section className="px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto">
+        <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-[#17151A] space-y-2 text-xs sm:text-sm leading-relaxed">
+          <div className="flex items-center gap-2 font-bold text-amber-900">
+            <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+            <span>Pemberitahuan Keselamatan & Bantuan Resmi</span>
           </div>
-          <p className="text-xs text-white/70">
-            Gratis • 18+ Khusus Mahasiswa Semarang • Tanpa Unduhan Berat
+          <p className="text-[#68626D] text-xs">
+            NIVA menyediakan mekanisme report, block, dan bantuan admin untuk penyalahgunaan di platform. Jika Anda mengalami kekerasan verbal, ancaman, pelecehan seksual, pemerasan, atau bentuk kejahatan lainnya, simpan bukti yang tersedia dan hubungi admin melalui kanal resmi NIVA. Jika terdapat keadaan darurat atau ancaman langsung terhadap keselamatan fisik, hubungi layanan darurat 110 (Kepolisian) atau 112 (Panggilan Darurat Kota Semarang).
           </p>
         </div>
       </section>
