@@ -715,4 +715,27 @@ CREATE TABLE IF NOT EXISTS user_restrictions (
 );
 CREATE INDEX IF NOT EXISTS idx_user_restrictions_status ON user_restrictions(restriction_type, restricted_until);
 
-
+-- 45. Advertising & Partnership Inquiries
+CREATE TABLE IF NOT EXISTS advertising_inquiries (
+    id TEXT PRIMARY KEY,
+    company_name TEXT NOT NULL,
+    contact_name TEXT NOT NULL,
+    contact_email TEXT NOT NULL,
+    contact_phone TEXT,
+    campaign_type TEXT NOT NULL CHECK(campaign_type IN (
+        'SPONSORED_BLOG', 'HOMEPAGE_PLACEMENT', 'STUDENT_EVENT',
+        'COMMUNITY_SPOTLIGHT', 'CAMPAIGN_PARTNERSHIP', 'OTHER'
+    )),
+    budget_range TEXT,
+    target_audience TEXT,
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'NEW' CHECK(status IN (
+        'NEW', 'CONTACTED', 'QUALIFIED', 'PROPOSAL', 'ACTIVE', 'COMPLETED', 'REJECTED'
+    )),
+    internal_notes TEXT,
+    assigned_admin_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ad_inquiries_status ON advertising_inquiries(status);
+CREATE INDEX IF NOT EXISTS idx_ad_inquiries_created ON advertising_inquiries(created_at DESC);

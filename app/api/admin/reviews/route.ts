@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { review_id, action, reason, admin_response } = body;
 
-    if (!review_id || !['APPROVE', 'REJECT', 'RESPOND'].includes(action)) {
+    if (!review_id || !['APPROVE', 'REJECT', 'RESPOND', 'HIDE', 'FLAG'].includes(action)) {
       return NextResponse.json({ error: 'Aksi atau ID ulasan tidak valid.' }, { status: 400 });
     }
 

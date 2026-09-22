@@ -102,6 +102,12 @@ export default async function AdminLayout({
               ⭐ User Reviews
             </Link>
             <Link
+              href="/app-admin/advertising"
+              className="px-3 py-1.5 rounded-lg text-[#C8BED4] hover:text-white hover:bg-white/5 transition-colors whitespace-nowrap"
+            >
+              📢 Iklan & Kemitraan
+            </Link>
+            <Link
               href="/app-admin/audit"
               className="px-3 py-1.5 rounded-lg text-[#C8BED4] hover:text-white hover:bg-white/5 transition-colors whitespace-nowrap"
             >

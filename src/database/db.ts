@@ -315,6 +315,24 @@ export function initDatabase(customPath?: string): void {
     )`,
     "CREATE INDEX IF NOT EXISTS idx_loc_verif_user ON location_verifications(user_id, expires_at)",
     "CREATE INDEX IF NOT EXISTS idx_loc_verif_session ON location_verifications(session_id)",
+    `CREATE TABLE IF NOT EXISTS advertising_inquiries (
+      id TEXT PRIMARY KEY,
+      company_name TEXT NOT NULL,
+      contact_name TEXT NOT NULL,
+      contact_email TEXT NOT NULL,
+      contact_phone TEXT,
+      campaign_type TEXT NOT NULL,
+      budget_range TEXT,
+      target_audience TEXT,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'NEW',
+      internal_notes TEXT,
+      assigned_admin_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_ad_inquiries_status ON advertising_inquiries(status)",
+    "CREATE INDEX IF NOT EXISTS idx_ad_inquiries_created ON advertising_inquiries(created_at DESC)",
   ];
 
   for (const sql of migrations) {
@@ -323,6 +341,42 @@ export function initDatabase(customPath?: string): void {
     } catch {
       // Column already exists or users table not created yet, ignore
     }
+  }
+
+  // Safe migration for reviews table to support HIDDEN status
+  try {
+    const reviewSchemaRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviews'").get() as { sql: string } | undefined;
+    if (reviewSchemaRow && !reviewSchemaRow.sql.includes('HIDDEN')) {
+      db.exec("PRAGMA foreign_keys = OFF;");
+      db.exec(`
+        CREATE TABLE reviews_v2 (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+          review_text TEXT NOT NULL,
+          recommend INTEGER NOT NULL DEFAULT 1,
+          improvement_category TEXT,
+          status TEXT NOT NULL DEFAULT 'PENDING_REVIEW' CHECK(status IN ('PENDING_REVIEW', 'APPROVED', 'REJECTED', 'HIDDEN')),
+          rejection_reason TEXT,
+          admin_response TEXT,
+          admin_response_at TEXT,
+          environment TEXT NOT NULL DEFAULT 'PRODUCTION',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        INSERT INTO reviews_v2 SELECT * FROM reviews;
+        DROP TABLE reviews;
+        ALTER TABLE reviews_v2 RENAME TO reviews;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_user ON reviews(user_id);
+        CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(status);
+        CREATE INDEX IF NOT EXISTS idx_reviews_rating ON reviews(rating);
+      `);
+      db.exec("PRAGMA foreign_keys = ON;");
+    }
+  } catch (err) {
+    // Already migrated or table doesn't exist yet
   }
 
   let schemaPath = path.join(__dirname, 'schema.sql');

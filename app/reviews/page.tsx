@@ -14,6 +14,8 @@ import {
   ChevronRight
 } from 'lucide-react';
 
+import { SEMARANG_INSTITUTIONS } from '@/lib/constants';
+
 interface ReviewItem {
   id: string;
   display_name: string;
@@ -45,9 +47,13 @@ export default function ReviewsPage() {
 
   // Submit form state
   const [formRating, setFormRating] = useState<number>(5);
+  const [formDisplayName, setFormDisplayName] = useState('');
+  const [isAnonymous, setIsAnonymous] = useState(false);
+  const [formInstitution, setFormInstitution] = useState('');
   const [formText, setFormText] = useState('');
   const [formRecommend, setFormRecommend] = useState(true);
   const [formCategory, setFormCategory] = useState('MATCHING');
+  const [formConsent, setFormConsent] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitMessage, setSubmitMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -73,18 +79,30 @@ export default function ReviewsPage() {
 
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formConsent) {
+      setSubmitMessage({ type: 'error', text: 'Anda harus menyetujui ketentuan komunitas ulasan NIVA.' });
+      return;
+    }
+
     setSubmitting(true);
     setSubmitMessage(null);
 
     try {
+      const effectiveDisplayName = isAnonymous
+        ? 'Mahasiswa Anonim'
+        : (formDisplayName.trim() || 'Mahasiswa Semarang');
+
       const res = await fetch('/api/reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          displayName: effectiveDisplayName,
+          institutionId: formInstitution || undefined,
           rating: formRating,
           reviewText: formText,
           recommend: formRecommend,
           improvementCategory: formCategory,
+          consentTerms: formConsent,
         }),
       });
 
@@ -92,6 +110,7 @@ export default function ReviewsPage() {
       if (res.ok) {
         setSubmitMessage({ type: 'success', text: data.message });
         setFormText('');
+        setFormDisplayName('');
         setTimeout(() => {
           setShowSubmitModal(false);
           setSubmitMessage(null);
@@ -309,6 +328,51 @@ export default function ReviewsPage() {
             </div>
 
             <form onSubmit={handleSubmitReview} className="space-y-4 text-xs">
+              {/* Display Name & Privacy Option */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-slate-300 font-semibold">
+                    Nama Tampilan (Display Name)
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isAnonymous}
+                      onChange={(e) => setIsAnonymous(e.target.checked)}
+                      className="rounded border-white/20 bg-slate-950 text-rose-500 focus:ring-0"
+                    />
+                    <span>Post secara Anonim</span>
+                  </label>
+                </div>
+                <input
+                  type="text"
+                  disabled={isAnonymous}
+                  value={isAnonymous ? 'Mahasiswa Anonim' : formDisplayName}
+                  onChange={(e) => setFormDisplayName(e.target.value)}
+                  placeholder="Contoh: Rian D., Mahasiswa UNDIP, Salsa"
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500/50 disabled:opacity-50"
+                />
+              </div>
+
+              {/* Campus / Institution Selector */}
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1.5">
+                  Asal Kampus di Semarang (Opsional)
+                </label>
+                <select
+                  value={formInstitution}
+                  onChange={(e) => setFormInstitution(e.target.value)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-rose-500/50"
+                >
+                  <option value="">Pilih kampus (opsional)...</option>
+                  {SEMARANG_INSTITUTIONS.map((inst) => (
+                    <option key={inst.shortName} value={`inst-${inst.shortName.toLowerCase()}`}>
+                      {inst.fullName} ({inst.shortName})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {/* Star Rating Selector */}
               <div>
                 <label className="block text-slate-300 font-semibold mb-1.5">
@@ -341,7 +405,7 @@ export default function ReviewsPage() {
                   Tuliskan ulasan pengalaman Anda (minimal 10 karakter):
                 </label>
                 <textarea
-                  rows={4}
+                  rows={3}
                   required
                   minLength={10}
                   maxLength={1000}
@@ -389,6 +453,21 @@ export default function ReviewsPage() {
                 />
                 <label htmlFor="recommend" className="text-slate-300 cursor-pointer">
                   Saya merekomendasikan NIVA kepada sesama mahasiswa Semarang
+                </label>
+              </div>
+
+              {/* Terms Consent Checkbox */}
+              <div className="flex items-start gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="consentTerms"
+                  checked={formConsent}
+                  onChange={(e) => setFormConsent(e.target.checked)}
+                  required
+                  className="rounded border-white/20 bg-slate-950 text-rose-500 focus:ring-0 mt-0.5"
+                />
+                <label htmlFor="consentTerms" className="text-[11px] text-slate-400 cursor-pointer leading-tight">
+                  Saya menyatakan bahwa ulasan ini adalah pengalaman nyata saya sendiri, tidak memuat informasi rahasia pribadi, dan bersedia ditampilkan secara publik sesuai kebijakan moderasi NIVA.
                 </label>
               </div>
 

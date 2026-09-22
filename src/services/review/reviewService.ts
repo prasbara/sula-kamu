@@ -10,7 +10,7 @@ export interface ReviewRecord {
   review_text: string;
   recommend: number; // 1 or 0
   improvement_category: string | null;
-  status: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+  status: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'HIDDEN';
   rejection_reason?: string | null;
   admin_response?: string | null;
   admin_response_at?: string | null;
@@ -37,7 +37,9 @@ export class ReviewService {
    * Submit or update user review (1 active review per user rule)
    */
   public static submitReview(input: {
-    userId: string;
+    userId?: string;
+    displayName?: string;
+    institutionId?: string;
     rating: number;
     reviewText: string;
     recommend?: boolean;
@@ -47,24 +49,50 @@ export class ReviewService {
     const db = getDatabase();
     const env = input.environment || 'PRODUCTION';
 
-    // 1. Verify user exists and fetch profile display name
-    const user = db.prepare('SELECT id, status, verification_status FROM users WHERE id = ?').get(input.userId) as
-      | { id: string; status: string; verification_status: string }
-      | undefined;
+    let finalUserId = input.userId;
+    let displayName = (input.displayName || '').trim();
 
-    if (!user) {
-      throw new Error('USER_NOT_FOUND: Pengguna tidak ditemukan.');
+    // 1. If existing userId provided, verify user
+    if (finalUserId) {
+      const user = db.prepare('SELECT id, status, verification_status FROM users WHERE id = ?').get(finalUserId) as
+        | { id: string; status: string; verification_status: string }
+        | undefined;
+
+      if (!user) {
+        throw new Error('USER_NOT_FOUND: Pengguna tidak ditemukan.');
+      }
+
+      if (user.status === 'BANNED' || user.status === 'SUSPENDED') {
+        throw new Error('USER_RESTRICTED: Akun Anda sedang dibatasi dan tidak dapat menulis ulasan.');
+      }
+
+      const profile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(finalUserId) as
+        | { display_name: string }
+        | undefined;
+
+      displayName = displayName || profile?.display_name || 'Mahasiswa NIVA';
+    } else {
+      // Create anonymous verified web user record to satisfy foreign key integrity
+      finalUserId = `anon_rev_${uuidv4().replace(/-/g, '').slice(0, 12)}`;
+      db.prepare(`
+        INSERT INTO users (id, telegram_id, status, verification_status, is_18_plus, created_at, updated_at)
+        VALUES (?, ?, 'ACTIVE', 'UNVERIFIED', 1, datetime('now'), datetime('now'))
+      `).run(finalUserId, finalUserId);
+
+      displayName = displayName || 'Mahasiswa Semarang';
+
+      // Pick or validate institution
+      const validInst = input.institutionId
+        ? (db.prepare('SELECT id FROM institutions WHERE id = ?').get(input.institutionId) as { id: string } | undefined)
+        : (db.prepare('SELECT id FROM institutions LIMIT 1').get() as { id: string } | undefined);
+
+      const instId = validInst?.id || 'inst-undip';
+
+      db.prepare(`
+        INSERT INTO profiles (id, user_id, display_name, age, institution_id, study_field, created_at, updated_at)
+        VALUES (?, ?, ?, 20, ?, 'Mahasiswa', datetime('now'), datetime('now'))
+      `).run(uuidv4(), finalUserId, displayName, instId);
     }
-
-    if (user.status === 'BANNED' || user.status === 'SUSPENDED') {
-      throw new Error('USER_RESTRICTED: Akun Anda sedang dibatasi dan tidak dapat menulis ulasan.');
-    }
-
-    const profile = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(input.userId) as
-      | { display_name: string }
-      | undefined;
-
-    const displayName = profile?.display_name || 'Mahasiswa NIVA';
 
     // 2. Validate rating and text
     const rating = Math.round(Number(input.rating));
@@ -98,15 +126,15 @@ export class ReviewService {
     const recommendVal = input.recommend === false ? 0 : 1;
 
     // 3. Upsert review (1 active review per user - allow updating their review)
-    const existing = db.prepare('SELECT id FROM reviews WHERE user_id = ?').get(input.userId) as { id: string } | undefined;
+    const existing = db.prepare('SELECT id FROM reviews WHERE user_id = ?').get(finalUserId) as { id: string } | undefined;
 
     if (existing) {
       db.prepare(`
         UPDATE reviews 
         SET rating = ?, review_text = ?, recommend = ?, improvement_category = ?,
-            status = 'PENDING_REVIEW', updated_at = datetime('now')
+            display_name = ?, status = 'PENDING_REVIEW', updated_at = datetime('now')
         WHERE id = ?
-      `).run(rating, cleanText, recommendVal, category, existing.id);
+      `).run(rating, cleanText, recommendVal, category, displayName, existing.id);
 
       return db.prepare('SELECT * FROM reviews WHERE id = ?').get(existing.id) as unknown as ReviewRecord;
     } else {
@@ -116,7 +144,7 @@ export class ReviewService {
           id, user_id, display_name, rating, review_text, recommend,
           improvement_category, status, environment, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', ?, datetime('now'), datetime('now'))
-      `).run(reviewId, input.userId, displayName, rating, cleanText, recommendVal, category, env);
+      `).run(reviewId, finalUserId, displayName, rating, cleanText, recommendVal, category, env);
 
       return db.prepare('SELECT * FROM reviews WHERE id = ?').get(reviewId) as unknown as ReviewRecord;
     }
@@ -143,6 +171,7 @@ export class ReviewService {
         r.review_text,
         r.recommend,
         r.improvement_category,
+        r.status,
         r.admin_response,
         r.admin_response_at,
         r.created_at,
@@ -212,13 +241,13 @@ export class ReviewService {
    * Admin review moderation (Section 23 & 30)
    */
   public static moderateReview(
-    reviewIdOrOpts: string | { reviewId: string; action: 'APPROVE' | 'REJECT' | 'RESPOND'; adminId: string; reason?: string; adminResponse?: string },
-    actionArg?: 'APPROVE' | 'REJECT' | 'RESPOND',
+    reviewIdOrOpts: string | { reviewId: string; action: 'APPROVE' | 'REJECT' | 'RESPOND' | 'HIDE' | 'FLAG'; adminId: string; reason?: string; adminResponse?: string },
+    actionArg?: 'APPROVE' | 'REJECT' | 'RESPOND' | 'HIDE' | 'FLAG',
     adminIdArg?: string,
     optionsArg?: { reason?: string; adminResponse?: string }
   ): ReviewRecord {
     let reviewId: string;
-    let action: 'APPROVE' | 'REJECT' | 'RESPOND';
+    let action: 'APPROVE' | 'REJECT' | 'RESPOND' | 'HIDE' | 'FLAG';
     let adminId: string;
     let options: { reason?: string; adminResponse?: string } | undefined;
 
@@ -270,6 +299,37 @@ export class ReviewService {
         targetResource: 'reviews',
         targetId: reviewId,
         details: `Rejected review ${reviewId}. Reason: ${reason}`,
+      });
+    } else if (action === 'HIDE') {
+      const reason = options?.reason || 'Disembunyikan sementara oleh moderator';
+      db.prepare(`
+        UPDATE reviews 
+        SET status = 'HIDDEN', rejection_reason = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(reason, reviewId);
+
+      ModerationService.logAudit({
+        actorId: adminId,
+        actorRole: 'MODERATOR',
+        action: 'REVIEW_HIDDEN',
+        targetResource: 'reviews',
+        targetId: reviewId,
+        details: `Hidden review ${reviewId}. Reason: ${reason}`,
+      });
+    } else if (action === 'FLAG') {
+      db.prepare(`
+        UPDATE reviews 
+        SET status = 'PENDING_REVIEW', rejection_reason = 'Ditandai untuk moderasi ulang', updated_at = datetime('now')
+        WHERE id = ?
+      `).run(reviewId);
+
+      ModerationService.logAudit({
+        actorId: adminId,
+        actorRole: 'MODERATOR',
+        action: 'REVIEW_FLAGGED',
+        targetResource: 'reviews',
+        targetId: reviewId,
+        details: `Flagged review ${reviewId} for re-review`,
       });
     } else if (action === 'RESPOND') {
       const responseText = (options?.adminResponse || '').trim();

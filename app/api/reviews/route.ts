@@ -25,22 +25,43 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    // Authenticate user via cookie
     const cookieStore = await cookies();
-    const userId = cookieStore.get('niva_user_token')?.value;
+    const tokenUserId = cookieStore.get('niva_user_token')?.value;
 
-    if (!userId) {
+    const body = await req.json();
+    const {
+      userId: bodyUserId,
+      displayName,
+      institutionId,
+      rating,
+      reviewText,
+      recommend,
+      improvementCategory,
+      consentTerms,
+      honeypot,
+    } = body;
+
+    // Bot trap check
+    if (honeypot) {
+      return NextResponse.json({
+        success: true,
+        message: 'Ulasan Anda berhasil dikirim dan sedang menunggu verifikasi moderasi singkat oleh tim NIVA.',
+      });
+    }
+
+    if (consentTerms === false) {
       return NextResponse.json(
-        { error: 'UNAUTHORIZED: Silakan masuk melalui bot Telegram NIVA untuk mengirimkan ulasan terverifikasi.' },
-        { status: 401 }
+        { error: 'Anda harus menyetujui ketentuan pedoman komunitas ulasan NIVA.' },
+        { status: 400 }
       );
     }
 
-    const body = await req.json();
-    const { rating, reviewText, recommend, improvementCategory } = body;
+    const effectiveUserId = tokenUserId || bodyUserId || undefined;
 
     const review = ReviewService.submitReview({
-      userId,
+      userId: effectiveUserId,
+      displayName: displayName ? String(displayName).trim() : undefined,
+      institutionId: institutionId ? String(institutionId) : undefined,
       rating,
       reviewText,
       recommend: recommend !== false,

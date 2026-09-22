@@ -61,7 +61,7 @@ export default function AdminReviewsPage() {
     fetchQueue();
   }, [statusFilter]);
 
-  const handleAction = async (reviewId: string, action: 'APPROVE' | 'REJECT' | 'RESPOND') => {
+  const handleAction = async (reviewId: string, action: 'APPROVE' | 'REJECT' | 'RESPOND' | 'HIDE' | 'FLAG') => {
     const reason = rejectReasons[reviewId] || '';
     const adminResponse = adminResponses[reviewId] || '';
 
@@ -111,12 +111,12 @@ export default function AdminReviewsPage() {
             ⭐ Moderasi & Tata Kelola Ulasan Mahasiswa
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Tinjau ulasan nyata dari pengguna. Admin dapat menyetujui, menolak spam/ujaran kebencian, atau memberikan tanggapan resmi "NIVA Team" tanpa memanipulasi rating bintang.
+            Tinjau ulasan nyata dari pengguna. Admin dapat menyetujui, menolak, menyembunyikan (hide), atau menandai ulang (flag) ulasan secara transparan dengan audit trail.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          {['PENDING_REVIEW', 'APPROVED', 'REJECTED', 'ALL'].map((st) => (
+          {['PENDING_REVIEW', 'APPROVED', 'REJECTED', 'HIDDEN', 'ALL'].map((st) => (
             <button
               key={st}
               onClick={() => setStatusFilter(st)}
