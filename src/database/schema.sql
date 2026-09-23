@@ -892,3 +892,28 @@ CREATE TABLE IF NOT EXISTS serverless_rate_limits (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_srl_reset ON serverless_rate_limits(reset_at);
+
+-- 53. Support NIVA Contributions (Official voluntary funding for infrastructure & operations)
+CREATE TABLE IF NOT EXISTS support_contributions (
+    id TEXT PRIMARY KEY,
+    support_code TEXT UNIQUE NOT NULL, -- e.g. SUPPORT-N849201
+    user_id TEXT,
+    donor_name TEXT,
+    donor_email TEXT,
+    amount INTEGER NOT NULL,
+    payment_method TEXT NOT NULL DEFAULT 'QRIS',
+    proof_data TEXT, -- Base64 data URL
+    proof_mime_type TEXT,
+    note TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING_VERIFICATION' CHECK(status IN ('PENDING_VERIFICATION', 'VERIFIED', 'REJECTED')),
+    verified_by TEXT,
+    verified_at TEXT,
+    rejection_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sc_code ON support_contributions(support_code);
+CREATE INDEX IF NOT EXISTS idx_sc_status ON support_contributions(status);
+CREATE INDEX IF NOT EXISTS idx_sc_created ON support_contributions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sc_user ON support_contributions(user_id);

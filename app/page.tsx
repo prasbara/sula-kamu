@@ -22,6 +22,7 @@ import {
   Compass,
   FileCheck2,
   HeartHandshake,
+  Heart,
   MapPin,
   Ban,
   PhoneCall,
@@ -1181,6 +1182,40 @@ export default function HomePage() {
           <p className="text-[11px] text-[#9D93A8] border-t border-[#2B2438] pt-4">
             ℹ️ Tim NIVA mungkin tidak selalu tersedia 24/7. Jika pesan belum langsung mendapat respons, ticket Anda tetap tersimpan dan dapat ditindaklanjuti oleh admin ketika tersedia.
           </p>
+        </div>
+      </section>
+
+      {/* 17.5 HELP NIVA GROW (COMMUNITY & INFRASTRUCTURE SUPPORT) */}
+      <section className="px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto">
+        <div className="bg-[#1C1726] border border-[#2B2438] rounded-3xl p-8 sm:p-10 flex flex-col md:flex-row items-center justify-between gap-6 hover:border-[#8A5A9A]/50 transition-all shadow-xl">
+          <div className="space-y-2 text-center md:text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-500/10 border border-rose-500/30 text-[11px] font-semibold text-rose-300">
+              <Heart className="w-3 h-3 fill-rose-300 text-rose-300" />
+              <span>Help NIVA grow</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+              Support Infrastructure & Perkembangan NIVA
+            </h2>
+            <p className="text-xs sm:text-sm text-[#C8BED4] max-w-xl leading-relaxed">
+              Dukungan sukarela kamu membantu NIVA berkembang ke infrastruktur server yang lebih kuat, lebih stabil, dan menjaga kapasitas Stranger Cam, Telegram Bot, serta moderasi komunitas.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
+            <Link
+              href="/support"
+              className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-rose-600 via-purple-600 to-indigo-600 text-white font-bold text-xs flex items-center gap-2 hover:opacity-95 shadow-lg transition-all"
+            >
+              <Heart className="w-3.5 h-3.5 fill-white" />
+              <span>❤️ Support NIVA</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+            <Link
+              href="/support/new?category=PARTNERSHIP"
+              className="px-5 py-3.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white font-semibold text-xs transition-all"
+            >
+              <span>💬 Hubungi Admin</span>
+            </Link>
+          </div>
         </div>
       </section>
 

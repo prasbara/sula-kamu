@@ -1016,6 +1016,42 @@ export function applyEssentialMigrations(db: DatabaseSync): void {
     } catch (e) {
       console.warn('serverless hardening tables migration warning:', e);
     }
+
+    // 9. Ensure Support NIVA Contributions Table & System Settings
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS support_contributions (
+          id TEXT PRIMARY KEY,
+          support_code TEXT UNIQUE NOT NULL,
+          user_id TEXT,
+          donor_name TEXT,
+          donor_email TEXT,
+          amount INTEGER NOT NULL,
+          payment_method TEXT NOT NULL DEFAULT 'QRIS',
+          proof_data TEXT,
+          proof_mime_type TEXT,
+          note TEXT,
+          status TEXT NOT NULL DEFAULT 'PENDING_VERIFICATION' CHECK(status IN ('PENDING_VERIFICATION', 'VERIFIED', 'REJECTED')),
+          verified_by TEXT,
+          verified_at TEXT,
+          rejection_reason TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sc_code ON support_contributions(support_code);
+        CREATE INDEX IF NOT EXISTS idx_sc_status ON support_contributions(status);
+        CREATE INDEX IF NOT EXISTS idx_sc_created ON support_contributions(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_sc_user ON support_contributions(user_id);
+
+        INSERT OR IGNORE INTO system_settings (key, value, description)
+        VALUES ('support_qris_account_name', 'NIVA Indonesia (QRIS)', 'Nama pemilik akun resmi QRIS Support NIVA');
+
+        INSERT OR IGNORE INTO system_settings (key, value, description)
+        VALUES ('support_qris_instructions', 'Pindai kode QRIS resmi NIVA melalui aplikasi perbankan (BCA, Mandiri, BRI, BNI, dll.) atau e-Wallet (GoPay, OVO, Dana, ShopeePay). Pastikan nominal transfer sesuai dan simpan bukti transfer untuk diunggah.', 'Petunjuk pembayaran QRIS');
+      `);
+    } catch (e) {
+      console.warn('support contributions migration warning:', e);
+    }
 }
 
 export function closeDatabase(): void {

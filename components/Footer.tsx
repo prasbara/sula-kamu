@@ -176,6 +176,11 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
+                <Link href="/support" className="hover:text-white transition-colors text-rose-300 font-semibold flex items-center gap-1">
+                  <span>❤️ Support NIVA (Dukungan Server)</span>
+                </Link>
+              </li>
+              <li>
                 <Link href="/reviews" className="hover:text-white transition-colors">
                   Ulasan Asli Pengguna
                 </Link>

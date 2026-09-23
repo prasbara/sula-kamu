@@ -101,6 +101,13 @@ export default function Navbar() {
               <span>Bantuan</span>
             </Link>
             <Link
+              href="/support"
+              prefetch={true}
+              className="px-2.5 py-2 text-rose-600 font-bold hover:bg-rose-50 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1"
+            >
+              <span>❤️ Support NIVA</span>
+            </Link>
+            <Link
               href="/advertise"
               prefetch={true}
               className="px-2.5 py-2 text-[#8A5A9A] font-semibold hover:bg-[#8A5A9A]/10 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1"
@@ -242,6 +249,14 @@ export default function Navbar() {
             className="block px-3 py-2 rounded-lg text-sm font-bold text-[#5B3A6D] bg-[#5B3A6D]/10"
           >
             🎫 Pusat Bantuan & Tiket
+          </Link>
+          <Link
+            href="/support"
+            prefetch={true}
+            onClick={() => setIsOpen(false)}
+            className="block px-3 py-2 rounded-lg text-sm font-bold text-rose-600 bg-rose-50 hover:bg-rose-100"
+          >
+            ❤️ Support NIVA
           </Link>
           <Link
             href="/advertise"
