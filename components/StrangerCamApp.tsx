@@ -30,7 +30,12 @@ import {
 import {
   detectFacePresence,
   FacePresenceResult,
+  FacePresenceDebouncer,
 } from '@/lib/facePresenceDetector';
+import {
+  VideoModerationEngine,
+  VideoViolationPayload,
+} from '@/lib/videoModerationEngine';
 
 type Step =
   | 'IDLE'
@@ -46,6 +51,9 @@ type Step =
   | 'PEER_DISCONNECTED'
   | 'CONNECTION_FAILED'
   | 'PERMISSION_DENIED'
+  | 'CAMERA_INIT_FAILED'
+  | 'FACE_TIMEOUT'
+  | 'RESTRICTED_BY_MODERATION'
   | 'ERROR';
 
 export type CameraSafetyState =
@@ -165,6 +173,16 @@ export default function StrangerCamApp() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState(REPORT_REASONS[0].value);
   const [reportDetails, setReportDetails] = useState('');
+  const [enforcementDetails, setEnforcementDetails] = useState<{
+    ticketId: string;
+    reason: string;
+    status: string;
+  } | null>(null);
+
+  // Moderation & Face presence engine references
+  const faceDebouncerRef = useRef<FacePresenceDebouncer | null>(null);
+  const videoModerationEngineRef = useRef<VideoModerationEngine | null>(null);
+  const reconnectAttemptsRef = useRef<number>(0);
 
   // WebRTC & Media references
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -366,6 +384,9 @@ export default function StrangerCamApp() {
       clearTimeout(offerRetryTimerRef.current);
       offerRetryTimerRef.current = null;
     }
+    if (videoModerationEngineRef.current) {
+      videoModerationEngineRef.current.stop();
+    }
     if (sseRef.current) {
       try { sseRef.current.close(); } catch {}
       sseRef.current = null;
@@ -382,15 +403,36 @@ export default function StrangerCamApp() {
   }
 
   function stopAllMedia() {
+    if (videoModerationEngineRef.current) {
+      videoModerationEngineRef.current.stop();
+      videoModerationEngineRef.current = null;
+    }
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
       localStreamRef.current = null;
     }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
     if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
+      try {
+        peerConnectionRef.current.onconnectionstatechange = null;
+        peerConnectionRef.current.oniceconnectionstatechange = null;
+        peerConnectionRef.current.ontrack = null;
+        peerConnectionRef.current.onicecandidate = null;
+        peerConnectionRef.current.close();
+      } catch {}
       peerConnectionRef.current = null;
     }
     remoteStreamRef.current = null;
+    setP2pConnected(false);
   }
 
   // ── Step 1: 18+ Age Gate & Fast Start (No Registration Required) ────────────
@@ -535,18 +577,76 @@ export default function StrangerCamApp() {
     );
   };
 
-  // ── Step 3: Camera & Face Presence Setup (Requirement 15 & 29) ─────────────
+  // ── Step 3: Camera & Face Presence Setup (Section 2 Full 9-Step Verification) ─────────────
   const handleSetupMedia = async () => {
     setLoading(true);
     setErrorMessage('');
     setSetupFaceStatus('CHECKING');
 
+    // 1. Check browser WebRTC support
+    if (typeof window === 'undefined' || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+      setErrorMessage('Browser Anda tidak mendukung WebRTC Camera API. Gunakan Chrome, Safari, Firefox, atau Edge versi terbaru.');
+      setStep('CAMERA_INIT_FAILED');
+      setLoading(false);
+      return;
+    }
+
     try {
+      // 2. Check camera availability via enumerateDevices
+      if (typeof navigator.mediaDevices.enumerateDevices === 'function') {
+        const initialDevices = await navigator.mediaDevices.enumerateDevices();
+        const hasCamera = initialDevices.some((d) => d.kind === 'videoinput');
+      }
+
+      // 3. Request camera & microphone permission
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
         audio: true,
       });
 
+      // 4. Enumerate available devices after permission is granted
+      const postDevices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = postDevices.filter((d) => d.kind === 'videoinput');
+
+      // 5. Select valid video input
+      if (videoInputs.length === 0) {
+        stream.getTracks().forEach((t) => t.stop());
+        setErrorMessage('Tidak ditemukan perangkat video input (kamera) yang valid pada sistem Anda.');
+        setStep('CAMERA_INIT_FAILED');
+        setLoading(false);
+        return;
+      }
+
+      // 6. Verify MediaStream
+      if (!stream || !stream.active) {
+        stream?.getTracks().forEach((t) => t.stop());
+        setErrorMessage('MediaStream kamera tidak aktif. Pastikan kamera tidak sedang dipakai aplikasi lain.');
+        setStep('CAMERA_INIT_FAILED');
+        setLoading(false);
+        return;
+      }
+
+      // 7. Verify video track
+      const videoTracks = stream.getVideoTracks();
+      if (videoTracks.length === 0) {
+        stream.getTracks().forEach((t) => t.stop());
+        setErrorMessage('Gagal mendeteksi trek video pada kamera Anda.');
+        setStep('CAMERA_INIT_FAILED');
+        setLoading(false);
+        return;
+      }
+
+      // 8. Verify track state
+      const videoTrack = videoTracks[0];
+      if (videoTrack.readyState !== 'live' || !videoTrack.enabled) {
+        stream.getTracks().forEach((t) => t.stop());
+        setErrorMessage('Trek video kamera tidak dalam kondisi "live". Pastikan privasi kamera tidak diblokir OS.');
+        setStep('CAMERA_INIT_FAILED');
+        setLoading(false);
+        return;
+      }
+
+      // 9. Successfully verified -> attach local stream
       localStreamRef.current = stream;
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
@@ -554,7 +654,7 @@ export default function StrangerCamApp() {
 
       setCameraSafetyState('CAMERA_ON_FACE_PRESENT');
 
-      // Run initial face presence check on preview after video element starts playing
+      // Run initial face presence check on preview
       setTimeout(async () => {
         if (!localVideoRef.current) return;
         try {
@@ -571,11 +671,20 @@ export default function StrangerCamApp() {
         }
       }, 700);
     } catch (err: any) {
-      setErrorMessage(
-        'Izin kamera atau mikrofon ditolak. Untuk menggunakan Stranger Cam, izinkan akses kamera & mikrofon di browser Anda.'
-      );
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setErrorMessage('Izin kamera atau mikrofon ditolak di browser Anda.');
+        setStep('PERMISSION_DENIED');
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setErrorMessage('Perangkat webcam/kamera tidak terdeteksi pada perangkat ini.');
+        setStep('CAMERA_INIT_FAILED');
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        setErrorMessage('Kamera sedang digunakan oleh aplikasi lain (Zoom, Teams, dsb) atau mengalami konflik hardware.');
+        setStep('CAMERA_INIT_FAILED');
+      } else {
+        setErrorMessage(err.message || 'Gagal menginisialisasi kamera.');
+        setStep('CAMERA_INIT_FAILED');
+      }
       setSetupFaceStatus('IDLE');
-      setStep('PERMISSION_DENIED');
     } finally {
       setLoading(false);
     }
@@ -588,8 +697,13 @@ export default function StrangerCamApp() {
     clearAllTimers();
 
     try {
-      // Ensure media is alive
-      await ensureActiveLocalMedia();
+      // Verify camera is active before entering queue (Requirement 2)
+      const activeMedia = await ensureActiveLocalMedia();
+      if (!activeMedia || activeMedia.getVideoTracks().length === 0 || activeMedia.getVideoTracks()[0].readyState !== 'live') {
+        setErrorMessage('Kamera tidak aktif atau gagal terdeteksi. Silakan inisialisasi kamera terlebih dahulu.');
+        setStep('CAMERA_INIT_FAILED');
+        return;
+      }
 
       let currentUid = userIdRef.current || userId || (typeof window !== 'undefined' ? localStorage.getItem('niva_stranger_user_id') : '') || '';
       if (!currentUid) {
@@ -826,16 +940,45 @@ export default function StrangerCamApp() {
 
     setupWebRTCConnection(session.id, peerIdRef.current, resolvedUid);
 
-    // Start Real-Time Face Presence Detection Loop (runs every 600ms on-device)
+    // Start Real-Time Face Presence and Computer Vision Moderation loop
     startFaceSafetyMonitor(session.id);
   };
 
-  // ── Face Visibility Safety Monitor (Requirements 1, 4, 5, 7, 8, 9) ─────────
+  // ── Face Visibility & Explicit Behavior Moderation Monitor (Requirements 7, 8, 9, 10, 11) ─────────
   const startFaceSafetyMonitor = (currentSessionId: string) => {
     if (faceDetectionTimerRef.current) clearInterval(faceDetectionTimerRef.current);
 
-    // Initial warm-up allowance (12 ticks = ~7.2s) so WebRTC connection, decoder, & canvas stabilize
-    let warmupTicksRemaining = 12;
+    if (!faceDebouncerRef.current) {
+      faceDebouncerRef.current = new FacePresenceDebouncer(graceSecondsRef.current);
+    } else {
+      faceDebouncerRef.current.reset();
+    }
+
+    // 1. Initialize VideoModerationEngine for explicit behavior / nudity detection
+    if (!videoModerationEngineRef.current) {
+      videoModerationEngineRef.current = new VideoModerationEngine({
+        sampleIntervalMs: 1000,
+        confidenceThreshold: 0.85,
+        consecutiveRequired: 3,
+        onStateChange: (modState, conf) => {
+          if (modState === 'SUSPECTED') {
+            console.log(`[Video Moderation] Suspected activity flagged (confidence: ${(conf * 100).toFixed(0)}%)`);
+          }
+        },
+        onEnforce: (violation) => {
+          handleExplicitBehaviorViolation(currentSessionId, violation);
+        },
+      });
+    } else {
+      videoModerationEngineRef.current.reset();
+    }
+
+    if (localVideoRef.current) {
+      videoModerationEngineRef.current.start(localVideoRef.current);
+    }
+
+    // Initial warm-up allowance (10 ticks = ~6s) so WebRTC connection & video decoder stabilize
+    let warmupTicksRemaining = 10;
 
     faceDetectionTimerRef.current = setInterval(async () => {
       // If camera is intentionally turned OFF by user, do not enforce face presence
@@ -855,9 +998,9 @@ export default function StrangerCamApp() {
 
       try {
         const result: FacePresenceResult = await detectFacePresence(localVideoRef.current);
+        const debounce = faceDebouncerRef.current!.update(result);
 
-        if (result.status === 'FACE_PRESENT') {
-          // Face is visible -> continue normally (Test 1 & 3: warning cancelled)
+        if (debounce.state === 'STABLE_PRESENT') {
           if (missingTicksRef.current > 0 || multipleTicksRef.current > 0) {
             missingTicksRef.current = 0;
             multipleTicksRef.current = 0;
@@ -865,49 +1008,21 @@ export default function StrangerCamApp() {
             setFaceWarningMessage('');
             setCameraSafetyState('CAMERA_ON_FACE_PRESENT');
           }
-        } else if (result.status === 'FACE_MISSING') {
-          // Face not detected -> start/continue countdown (Test 2 & 4)
-          multipleTicksRef.current = 0;
+        } else if (debounce.state === 'IN_GRACE_PERIOD') {
           missingTicksRef.current += 1;
           setCameraSafetyState('CAMERA_ON_FACE_MISSING');
+          setFaceWarningCountdown(debounce.remainingGraceSeconds);
 
-          // Each tick is ~600ms. 10 ticks = 6.0 seconds
-          const elapsedSecs = Math.floor(missingTicksRef.current * 0.6);
-          const countdown = Math.max(0, graceSecondsRef.current - elapsedSecs);
-          setFaceWarningCountdown(countdown);
-
-          if (result.isLowLight) {
-            setFaceWarningMessage('Wajah sulit terdeteksi. Coba arahkan wajah ke kamera atau gunakan pencahayaan lebih terang.');
+          if (result.status === 'MULTIPLE_FACES') {
+            setFaceWarningMessage(`Hanya satu orang yang boleh terlihat (${debounce.remainingGraceSeconds}s)`);
+          } else if (result.isLowLight) {
+            setFaceWarningMessage(`Pencahayaan rendah, arahkan wajah ke kamera (${debounce.remainingGraceSeconds}s)`);
           } else {
-            setFaceWarningMessage('Wajah tidak terlihat di kamera. Kamera akan dimatikan jika wajah tidak kembali terlihat.');
+            setFaceWarningMessage(`Wajah tidak terlihat di kamera (${debounce.remainingGraceSeconds}s)`);
           }
-
-          // Test 4: Grace period expired (> graceSeconds) -> automatically disable camera
-          if (countdown <= 0) {
-            triggerCameraAutoDisable(
-              currentSessionId,
-              'FACE_VISIBILITY_CAMERA_DISABLED',
-              `Wajah tidak terlihat di kamera selama melebihi batas toleransi ${graceSecondsRef.current} detik`
-            );
-          }
-        } else if (result.status === 'MULTIPLE_FACES') {
-          // Multiple faces detected (Test 7)
-          missingTicksRef.current = 0;
-          multipleTicksRef.current += 1;
-          setCameraSafetyState('CAMERA_ON_FACE_MISSING');
-
-          const elapsedSecs = Math.floor(multipleTicksRef.current * 0.6);
-          const countdown = Math.max(0, graceSecondsRef.current - elapsedSecs);
-          setFaceWarningCountdown(countdown);
-          setFaceWarningMessage('Hanya satu orang yang boleh terlihat di kamera. Kamera akan dimatikan jika kondisi ini berlanjut.');
-
-          if (countdown <= 0) {
-            triggerCameraAutoDisable(
-              currentSessionId,
-              'MULTIPLE_FACE_CAMERA_DISABLED',
-              `Terdeteksi lebih dari satu orang di kamera selama melebihi ${graceSecondsRef.current} detik`
-            );
-          }
+        } else if (debounce.state === 'ENFORCEMENT_REQUIRED') {
+          // Grace period expired (> graceSeconds continuous absence) -> enforce session termination & ticket
+          handleNoFaceViolation(currentSessionId, debounce.missingDurationMs);
         }
       } catch {
         // Fallback: keep call running
@@ -915,39 +1030,76 @@ export default function StrangerCamApp() {
     }, 600);
   };
 
-  // Disable outgoing video track and log minimal safety metadata (Requirement 8, 13, 20)
-  const triggerCameraAutoDisable = (currentSessionId: string, eventType: string, reason: string) => {
-    // 1. Disable local video track immediately (remote sees black / camera off, not frozen frame)
-    if (localStreamRef.current) {
-      localStreamRef.current.getVideoTracks().forEach((track) => {
-        track.enabled = false;
-      });
-    }
+  // Section 8: No-Face Enforcement handler
+  const handleNoFaceViolation = async (currentSessionId: string, missingDurationMs: number) => {
+    // 1. Strictly invoke MediaStreamTrack.stop()
+    stopAllMedia();
+    clearAllTimers();
 
-    setIsCameraOff(true);
-    setCameraSafetyState('CAMERA_AUTO_DISABLED');
-    setFaceWarningCountdown(null);
-    setFaceWarningMessage('');
-    missingTicksRef.current = 0;
-    multipleTicksRef.current = 0;
-
-    // 2. Notify remote participant via WebRTC signal that camera was disabled
     const activeUid = userIdRef.current || userId;
-    if (currentSessionId && activeUid) {
-      sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'CAMERA_STATE', enabled: false }));
+    sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'PEER_LEFT', reason: 'Sesi diakhiri: Wajah tidak terlihat di kamera.' }));
 
-      // 3. Log minimal safety event (zero images stored)
-      fetch('/api/stranger-cam/session/safety-event', {
+    try {
+      const res = await fetch('/api/stranger-cam/session/enforce', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId: currentSessionId,
           userId: activeUid,
-          eventType,
-          reason,
+          sessionId: currentSessionId,
+          violationType: 'FACE_NOT_VISIBLE',
+          severity: 'MEDIUM',
+          detectionConfidence: 0.95,
+          detectionDurationMs: missingDurationMs,
+          detectionMetadata: { missingDurationMs },
+          automatedAction: 'TERMINATE_SESSION',
+          reason: `Wajah tidak terlihat di kamera melebihi batas waktu ${graceSecondsRef.current} detik.`,
         }),
-      }).catch(() => {});
-    }
+      });
+      const data = await res.json();
+      setEnforcementDetails({
+        ticketId: data.ticketId || 'TICKET_CREATED',
+        reason: 'Wajah tidak terdeteksi di kamera melebihi batas toleransi.',
+        status: data.moderationStatus || 'ACTIVE',
+      });
+    } catch {}
+
+    setStep('FACE_TIMEOUT');
+  };
+
+  // Section 10: Explicit Sexual Behavior Enforcement handler
+  const handleExplicitBehaviorViolation = async (currentSessionId: string, violation: VideoViolationPayload) => {
+    // 1. Strictly invoke MediaStreamTrack.stop()
+    stopAllMedia();
+    clearAllTimers();
+
+    const activeUid = userIdRef.current || userId;
+    sendSignalToPeer('CANDIDATE', JSON.stringify({ type: 'PEER_LEFT', reason: 'Sesi diakhiri oleh sistem moderasi keamanan.' }));
+
+    try {
+      const res = await fetch('/api/stranger-cam/session/enforce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: activeUid,
+          sessionId: currentSessionId,
+          violationType: violation.violationType,
+          severity: violation.severity,
+          detectionConfidence: violation.confidence,
+          detectionDurationMs: violation.detectionDurationMs,
+          detectionMetadata: violation.metadata,
+          automatedAction: violation.automatedAction,
+          reason: violation.reason,
+        }),
+      });
+      const data = await res.json();
+      setEnforcementDetails({
+        ticketId: data.ticketId || 'TICKET_RESTRICTED',
+        reason: violation.reason,
+        status: data.moderationStatus || 'RESTRICTED',
+      });
+    } catch {}
+
+    setStep('RESTRICTED_BY_MODERATION');
   };
 
   // Dedicated Real-Time Multi-Channel Signaling (Internal Authenticated Route)
@@ -1174,10 +1326,11 @@ export default function StrangerCamApp() {
       iceCandidateBufferRef.current = [];
       processedSignalsRef.current = new Set();
 
-      // Listen for connectionstatechange
+      // Listen for connectionstatechange with controlled reconnect policy (Section 3)
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
         if (s === 'connected') {
+          reconnectAttemptsRef.current = 0;
           setP2pConnected(true);
           setStep('CONNECTED');
           fetch('/api/stranger-cam/session/action', {
@@ -1186,15 +1339,39 @@ export default function StrangerCamApp() {
             body: JSON.stringify({ action: 'CONFIRM_P2P', sessionId: currentSessionId, userId: myUid }),
           }).catch(() => {});
         } else if (s === 'disconnected') {
-          setTimeout(() => {
-            if (peerConnectionRef.current && peerConnectionRef.current.connectionState === 'disconnected') {
-              setP2pConnected(false);
-              setStep('PEER_DISCONNECTED');
-            }
-          }, 3500);
+          if (reconnectAttemptsRef.current < 3) {
+            reconnectAttemptsRef.current++;
+            console.log(`[WebRTC] Disconnected. Attempting controlled ICE restart recovery (${reconnectAttemptsRef.current}/3)...`);
+            try {
+              if (typeof pc.restartIce === 'function') {
+                pc.restartIce();
+              }
+            } catch {}
+            setTimeout(() => {
+              if (peerConnectionRef.current && peerConnectionRef.current.connectionState === 'disconnected') {
+                if (reconnectAttemptsRef.current >= 3) {
+                  setP2pConnected(false);
+                  setStep('PEER_DISCONNECTED');
+                }
+              }
+            }, 3500);
+          } else {
+            setP2pConnected(false);
+            setStep('PEER_DISCONNECTED');
+          }
         } else if (s === 'failed') {
-          setP2pConnected(false);
-          setStep('CONNECTION_FAILED');
+          if (reconnectAttemptsRef.current < 2) {
+            reconnectAttemptsRef.current++;
+            console.log('[WebRTC] Connection failed. Attempting single ICE restart renegotiation...');
+            try {
+              if (typeof pc.restartIce === 'function') {
+                pc.restartIce();
+              }
+            } catch {}
+          } else {
+            setP2pConnected(false);
+            setStep('CONNECTION_FAILED');
+          }
         } else if (s === 'closed') {
           setP2pConnected(false);
         }
@@ -1203,11 +1380,14 @@ export default function StrangerCamApp() {
       pc.oniceconnectionstatechange = () => {
         const s = pc.iceConnectionState;
         if (s === 'connected' || s === 'completed') {
+          reconnectAttemptsRef.current = 0;
           setP2pConnected(true);
           setStep('CONNECTED');
         } else if (s === 'failed') {
-          setP2pConnected(false);
-          setStep('CONNECTION_FAILED');
+          if (reconnectAttemptsRef.current >= 2) {
+            setP2pConnected(false);
+            setStep('CONNECTION_FAILED');
+          }
         }
       };
 
@@ -2414,6 +2594,123 @@ export default function StrangerCamApp() {
             >
               Kembali ke Pengaturan Media
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── STAGE 7: CAMERA INIT FAILED STATE (Section 2) ─────────────────── */}
+      {step === 'CAMERA_INIT_FAILED' && (
+        <div className="max-w-md mx-auto py-12 text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/30 mx-auto flex items-center justify-center text-rose-400">
+            <VideoOff className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-2xl font-display font-bold text-white">
+              Gagal Memulai Kamera
+            </h3>
+            <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+              {errorMessage || 'Perangkat kamera webcam tidak dapat diinisialisasi atau tidak aktif.'}
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-white/5 border border-white/10 text-xs text-gray-300 space-y-2 text-left">
+            <div className="font-semibold text-white">Langkah perbaikan:</div>
+            <ul className="list-disc list-inside space-y-1 text-gray-400 text-[11px]">
+              <li>Tutup aplikasi lain yang mungkin menggunakan webcam (Zoom, Google Meet, Teams).</li>
+              <li>Periksa izin kamera di ikon gembok URL browser Anda.</li>
+              <li>Pastikan webcam eksternal terhubung dengan baik jika menggunakan PC.</li>
+            </ul>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+            <button
+              onClick={handleSetupMedia}
+              className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] hover:opacity-90 text-white text-xs font-bold transition-all"
+            >
+              Coba Inisialisasi Kamera Lagi
+            </button>
+            <button
+              onClick={() => setStep('DEVICE_SETUP')}
+              className="px-6 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold border border-white/10 transition-colors"
+            >
+              Kembali
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── STAGE 8: FACE TIMEOUT STATE (Section 8) ───────────────────────── */}
+      {step === 'FACE_TIMEOUT' && (
+        <div className="max-w-md mx-auto py-12 text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/30 mx-auto flex items-center justify-center text-amber-400">
+            <EyeOff className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-2xl font-display font-bold text-white">
+              Sesi Diakhiri: Wajah Tidak Terlihat
+            </h3>
+            <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+              Kebijakan Stranger Cam NIVA mewajibkan wajah pengguna tetap terlihat di depan kamera demi keamanan bersama. Kamera telah dinonaktifkan secara otomatis.
+            </p>
+            {enforcementDetails?.ticketId && (
+              <p className="text-[11px] text-gray-400">
+                Log Moderasi: <code className="text-amber-300">{enforcementDetails.ticketId}</code>
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+            <button
+              onClick={() => {
+                setStep('DEVICE_SETUP');
+                handleSetupMedia();
+              }}
+              className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] hover:opacity-90 text-white text-xs font-bold transition-all"
+            >
+              Nyalakan Kamera & Siapkan Wajah
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── STAGE 9: RESTRICTED BY MODERATION (Section 10 & 14) ──────────── */}
+      {step === 'RESTRICTED_BY_MODERATION' && (
+        <div className="max-w-md mx-auto py-12 text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/30 mx-auto flex items-center justify-center text-rose-400 animate-pulse">
+            <ShieldBan className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-2xl font-display font-bold text-white">
+              Akses Dibatasi oleh Moderasi
+            </h3>
+            <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+              {enforcementDetails?.reason || 'Terdeteksi indikasi perilaku atau visual yang melanggar kebijakan komunitas NIVA.'} Kamera telah dihentikan seketika.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-200 space-y-2 text-left">
+            <div className="font-semibold text-white">Detail Penegakan Server:</div>
+            <p className="text-[11px] text-rose-300">
+              Tiket Moderasi: <code className="font-mono bg-black/40 px-1.5 py-0.5 rounded text-white">{enforcementDetails?.ticketId || 'NIVA-CAM-MOD'}</code>
+            </p>
+            <p className="text-[11px] text-gray-300">
+              Status akun diubah menjadi <strong className="text-white">RESTRICTED</strong>. Pembatasan ini tersimpan di server dan tidak dapat dilewati dengan refresh browser.
+            </p>
+            <p className="text-[11px] text-gray-400">
+              Jika ini merupakan false positive, tiket Anda akan ditinjau oleh Admin Dashboard atau Anda dapat mengajukan banding melalui pusat bantuan.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+            <a
+              href="/support"
+              className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#5B3A6D] to-[#8A5A9A] hover:opacity-90 text-white text-xs font-bold transition-all inline-block"
+            >
+              Buka Pusat Bantuan NIVA
+            </a>
           </div>
         </div>
       )}

@@ -220,51 +220,60 @@ export class NotifyService {
   }
 
   /**
-   * Send operational system alert to NotifyNIVABot
+   * Send automated moderation enforcement alert to NotifyNIVABot
    */
-  public static async notifySystemAlert(
-    title: string,
-    description: string,
-    severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'MEDIUM'
+  public static async notifyModerationAlert(
+    detailsOrText:
+      | string
+      | {
+          ticketId: string;
+          userId: string;
+          sessionId: string;
+          violationType: string;
+          severity: string;
+          reason: string;
+        }
   ): Promise<void> {
     if (!config.NOTIFY_NIVA_ENABLED || !this.adminBotToken) return;
     const chatId = this.getAdminChatId();
     if (!chatId) return;
 
-    const icon = severity === 'CRITICAL' ? '🔥' : severity === 'HIGH' ? '⚠️' : 'ℹ️';
+    if (typeof detailsOrText === 'string') {
+      await this.sendTelegramMessage(
+        this.adminBotToken,
+        chatId,
+        detailsOrText,
+        {
+          inline_keyboard: [
+            [{ text: '🛡 Buka Antrean Moderasi', url: `${config.APP_URL}/app-admin/moderation` }]
+          ]
+        },
+        'MODERATION_ALERT',
+        'system'
+      );
+      return;
+    }
+
+    const details = detailsOrText;
     const message = [
-      `${icon} *SYSTEM ALERT (${severity})*`,
+      '🚨 *NIVA STRANGER CAM MODERATION ENFORCEMENT*',
       '',
-      `📢 *${this.escapeMarkdown(title)}*`,
-      '',
-      this.escapeMarkdown(description),
-      '',
+      `🎫 *Ticket ID:* \`${this.escapeMarkdown(details.ticketId)}\``,
+      `⚠️ *Pelanggaran:* *${this.escapeMarkdown(details.violationType)}* (${this.escapeMarkdown(details.severity)})`,
+      `👤 *User ID:* \`${this.escapeMarkdown(details.userId)}\``,
+      `📹 *Session ID:* \`${this.escapeMarkdown(details.sessionId)}\``,
+      `📝 *Penyebab:* ${this.escapeMarkdown(details.reason)}`,
       `📅 *Waktu:* ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB`,
     ].join('\n');
 
-    await this.sendTelegramMessage(this.adminBotToken, chatId, message, undefined, 'SYSTEM_ALERT', 'system');
-  }
+    const adminUrl = `${config.APP_URL}/app-admin/stranger-cam`;
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: '🛡 Buka Antrean Moderasi Admin', url: adminUrl }]
+      ]
+    };
 
-  /**
-   * Send security strike or critical restriction alert to NotifyNIVABot
-   */
-  public static async notifyModerationAlert(text: string): Promise<void> {
-    if (!config.NOTIFY_NIVA_ENABLED || !this.adminBotToken) return;
-    const chatId = this.getAdminChatId();
-    if (!chatId) return;
-
-    await this.sendTelegramMessage(
-      this.adminBotToken,
-      chatId,
-      text,
-      {
-        inline_keyboard: [
-          [{ text: '🛡 Buka Antrean Moderasi', url: `${config.APP_URL}/app-admin/moderation` }]
-        ]
-      },
-      'MODERATION_ALERT',
-      'moderation_engine'
-    );
+    await this.sendTelegramMessage(this.adminBotToken, chatId, message, keyboard, 'STRANGER_CAM_MODERATION', details.userId);
   }
 
   // ── 2. User Outbound Notifications (NIVASocial @nivasocialmakingbot) ───────

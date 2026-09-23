@@ -69,6 +69,18 @@ const SUSPICIOUS_TEXT_PATTERNS = [
   { pattern: /(https?:\/\/[^\s]+|bit\.ly\/[^\s]+|tinyurl\.com\/[^\s]+)/i, flag: 'EXTERNAL_URL', score: 0.6 },
 ];
 
+export interface ModerationEnforcementInput {
+  userId: string;
+  sessionId: string;
+  violationType: 'FACE_NOT_VISIBLE' | 'EXPLICIT_BEHAVIOR' | 'HARASSMENT' | string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  detectionConfidence: number;
+  detectionDurationMs?: number;
+  detectionMetadata?: Record<string, any>;
+  automatedAction: 'WARN' | 'TERMINATE_SESSION' | 'RESTRICT_USER' | 'BAN_USER';
+  reason: string;
+}
+
 // ─── Realtime Signal Bus for Server-Sent Events (SSE) ───────────────────────
 type SignalListener = (signal: any) => void;
 const signalListeners = new Map<string, Set<SignalListener>>();
@@ -175,15 +187,15 @@ export class StrangerCamService {
     const db = getDatabase();
 
     let user = db.prepare(`
-      SELECT id, status, is_18_plus, birth_date FROM users WHERE id = ?
-    `).get(userId) as { id: string; status: string; is_18_plus: number; birth_date?: string } | undefined;
+      SELECT id, status, is_18_plus, birth_date, moderation_status FROM users WHERE id = ?
+    `).get(userId) as { id: string; status: string; is_18_plus: number; birth_date?: string; moderation_status?: string } | undefined;
 
     if (!user && userId && typeof userId === 'string' && userId.trim().length >= 6) {
       try {
         StrangerCamService.getOrCreateStrangerUser({ userId: userId.trim(), is18Plus: true });
         user = db.prepare(`
-          SELECT id, status, is_18_plus, birth_date FROM users WHERE id = ?
-        `).get(userId.trim()) as { id: string; status: string; is_18_plus: number; birth_date?: string } | undefined;
+          SELECT id, status, is_18_plus, birth_date, moderation_status FROM users WHERE id = ?
+        `).get(userId.trim()) as { id: string; status: string; is_18_plus: number; birth_date?: string; moderation_status?: string } | undefined;
       } catch (autoErr) {
         console.warn('Stranger user auto-provision notice in checkEligibility:', autoErr);
       }
@@ -196,6 +208,36 @@ export class StrangerCamService {
     if (user.status !== 'ACTIVE') {
       return { eligible: false, reason: 'Akun Anda sedang dinonaktifkan atau dalam peninjauan.', requiresAge: false, requiresLocation: false };
     }
+
+    // 0. Server-Side Moderation Status & Restrictions Enforcement (Anti-Bypass)
+    if (user.moderation_status && user.moderation_status !== 'ACTIVE') {
+      return {
+        eligible: false,
+        reason: `Akses Stranger Cam Anda sedang dibatasi oleh sistem moderasi (${user.moderation_status}). Tiket peninjauan sedang aktif di Admin Dashboard.`,
+        requiresAge: false,
+        requiresLocation: false,
+      };
+    }
+
+    try {
+      const activeRestriction = db.prepare(`
+        SELECT restriction_type, restricted_until, reason FROM user_restrictions
+        WHERE user_id = ? AND restriction_type NOT IN ('NONE', 'WARNING')
+          AND (restricted_until IS NULL OR datetime(restricted_until) > datetime('now'))
+        LIMIT 1
+      `).get(userId) as { restriction_type: string; restricted_until?: string; reason?: string } | undefined;
+
+      if (activeRestriction) {
+        return {
+          eligible: false,
+          reason: activeRestriction.reason
+            ? `Akses Stranger Cam dibatasi: ${activeRestriction.reason}`
+            : 'Akses Stranger Cam Anda sedang dibatasi oleh penegakan kebijakan moderasi NIVA.',
+          requiresAge: false,
+          requiresLocation: false,
+        };
+      }
+    } catch {}
 
     // 1. 18+ Requirement
     const isAdult = user.is_18_plus === 1;
@@ -1360,5 +1402,470 @@ export class StrangerCamService {
     );
 
     return { success: true, eventId };
+  }
+
+  // ── Production Moderation Enforcement & Automated Ticketing ─────────────────
+
+  /**
+   * Enforces server-side moderation when automated safety detection triggers (e.g. FACE_NOT_VISIBLE or EXPLICIT_BEHAVIOR).
+   * 1. Terminates active session immediately.
+   * 2. Sets user moderation_status and active restriction in database.
+   * 3. Inserts moderation_events record with full metadata.
+   * 4. Automatically creates support/moderation ticket in database.
+   * 5. Links ticket directly with user, session, and violation.
+   * 6. Dispatches real-time SSE signal to partner.
+   * 7. Logs immutable audit trail in audit_logs.
+   * 8. Triggers alert to Admin Notify Bot.
+   */
+  public static enforceModerationViolation(opts: ModerationEnforcementInput): {
+    success: boolean;
+    ticketId: string;
+    eventId: string;
+    moderationStatus: string;
+    message: string;
+  } {
+    const db = getDatabase();
+    const eventId = uuidv4();
+    const randomSuffix = Math.floor(100000 + Math.random() * 900000);
+    const ticketId = `NIVA-CAM-${randomSuffix}`;
+
+    // 1. Terminate the active session
+    let partnerId: string | null = null;
+    const session = db.prepare('SELECT id, user_a_id, user_b_id, status FROM stranger_sessions WHERE id = ?').get(opts.sessionId) as any;
+    if (session) {
+      partnerId = session.user_a_id === opts.userId ? session.user_b_id : session.user_a_id;
+      db.prepare(`
+        UPDATE stranger_sessions
+        SET status = 'ENDED',
+            ended_at = datetime('now'),
+            end_reason = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(`MODERATION_${opts.violationType}`, opts.sessionId);
+    }
+
+    // 2. Remove user from queue
+    db.prepare('DELETE FROM stranger_queue WHERE user_id = ?').run(opts.userId);
+    try {
+      db.prepare('DELETE FROM stranger_chat_queue WHERE user_id = ?').run(opts.userId);
+    } catch {}
+
+    // 3. Notify peer via real-time SignalBus
+    if (partnerId && partnerId !== 'ANON_PEER') {
+      try {
+        SignalBus.emit(opts.sessionId, partnerId, {
+          signalType: 'CANDIDATE',
+          payload: JSON.stringify({
+            type: 'PEER_LEFT',
+            reason: opts.violationType === 'FACE_NOT_VISIBLE'
+              ? 'Sesi diakhiri: Wajah lawan bicara tidak terdeteksi di kamera.'
+              : 'Sesi diakhiri oleh sistem moderasi keamanan NIVA.',
+          }),
+          createdAt: new Date().toISOString(),
+        });
+      } catch {}
+    }
+
+    // 4. Update user moderation status & restrictions
+    const newModStatus = (opts.automatedAction === 'BAN_USER')
+      ? 'BANNED'
+      : (opts.automatedAction === 'RESTRICT_USER' ? 'RESTRICTED' : 'UNDER_REVIEW');
+
+    if (opts.automatedAction === 'RESTRICT_USER' || opts.automatedAction === 'BAN_USER') {
+      db.prepare(`
+        UPDATE users
+        SET moderation_status = ?,
+            status = CASE WHEN ? = 'BANNED' THEN 'BANNED' ELSE status END,
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(newModStatus, newModStatus, opts.userId);
+
+      const restrictUntil = (opts.automatedAction === 'BAN_USER')
+        ? null
+        : new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+
+      db.prepare(`
+        INSERT INTO user_restrictions (user_id, restriction_type, active_strikes, restricted_until, reason, created_at, updated_at)
+        VALUES (?, 'CAM_RESTRICTED', 1, ?, ?, datetime('now'), datetime('now'))
+        ON CONFLICT(user_id) DO UPDATE SET
+          restriction_type = 'CAM_RESTRICTED',
+          active_strikes = active_strikes + 1,
+          restricted_until = excluded.restricted_until,
+          reason = excluded.reason,
+          updated_at = datetime('now')
+      `).run(opts.userId, restrictUntil, opts.reason);
+    }
+
+    // 5. Create record in moderation_events
+    db.prepare(`
+      INSERT INTO moderation_events (
+        id, user_id, session_id, category, severity, action,
+        strike_count, risk_score, evidence_snippet, review_status,
+        ticket_id, detection_metadata, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'PENDING', ?, ?, datetime('now'))
+    `).run(
+      eventId,
+      opts.userId,
+      opts.sessionId,
+      opts.violationType,
+      opts.severity,
+      opts.automatedAction,
+      opts.detectionConfidence,
+      opts.reason,
+      ticketId,
+      JSON.stringify(opts.detectionMetadata || {})
+    );
+
+    // 6. Create production support ticket in support_tickets
+    const priority = opts.severity === 'CRITICAL' ? 'URGENT' : (opts.severity === 'HIGH' ? 'HIGH' : 'NORMAL');
+    const metaStr = JSON.stringify(opts.detectionMetadata || {});
+    const internalNotes = `Automated enforcement: ${opts.reason}. Duration: ${opts.detectionDurationMs || 0}ms. Confidence: ${(opts.detectionConfidence * 100).toFixed(1)}%. Event ID: ${eventId}`;
+
+    db.prepare(`
+      INSERT INTO support_tickets (
+        id, user_id, type, category, subject, status, priority,
+        session_id, moderation_event_id, violation_type, detection_confidence,
+        automated_action, detection_metadata, internal_notes, created_at, updated_at
+      ) VALUES (?, ?, 'GENERAL', 'SAFETY_REPORT', ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(
+      ticketId,
+      opts.userId,
+      `[Stranger Cam] ${opts.violationType} - Session ${opts.sessionId.slice(0, 8)}`,
+      priority,
+      opts.sessionId,
+      eventId,
+      opts.violationType,
+      opts.detectionConfidence,
+      opts.automatedAction,
+      metaStr,
+      internalNotes
+    );
+
+    // 7. Initial message in support_messages
+    try {
+      db.prepare(`
+        INSERT INTO support_messages (id, ticket_id, sender_type, sender_id, sender_name, body, is_internal, created_at)
+        VALUES (?, ?, 'SYSTEM', 'system_moderation', 'NIVA Automated Safety Guard', ?, 0, datetime('now'))
+      `).run(
+        uuidv4(),
+        ticketId,
+        `[Automated Moderation] Terdeteksi pelanggaran ${opts.violationType}: ${opts.reason}. Tindakan otomatis: ${opts.automatedAction}. Status akun: ${newModStatus}.`
+      );
+    } catch {}
+
+    // 8. Log into stranger_safety_events
+    try {
+      db.prepare(`
+        INSERT INTO stranger_safety_events (id, session_id, user_id, event_type, risk_score, payload, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      `).run(
+        uuidv4(),
+        opts.sessionId,
+        opts.userId,
+        `AUTOMATED_MODERATION_${opts.violationType}`,
+        opts.detectionConfidence,
+        JSON.stringify({
+          ticketId,
+          eventId,
+          automatedAction: opts.automatedAction,
+          severity: opts.severity,
+          reason: opts.reason,
+          detectionDurationMs: opts.detectionDurationMs || 0,
+        })
+      );
+    } catch {}
+
+    // 9. Append immutable privileged audit log
+    try {
+      db.prepare(`
+        INSERT INTO audit_logs (id, actor_id, actor_role, action, target_resource, target_id, details, created_at)
+        VALUES (?, 'SYSTEM_MODERATION', 'SYSTEM', 'CAM_MODERATION_ENFORCED', 'STRANGER_CAM_SESSION', ?, ?, datetime('now'))
+      `).run(
+        uuidv4(),
+        opts.userId,
+        JSON.stringify({
+          ticketId,
+          sessionId: opts.sessionId,
+          violationType: opts.violationType,
+          confidence: opts.detectionConfidence,
+          automatedAction: opts.automatedAction,
+        })
+      );
+    } catch {}
+
+    // 10. Alert Admin Bot via NotifyService
+    try {
+      NotifyService.notifyModerationAlert({
+        ticketId,
+        userId: opts.userId,
+        sessionId: opts.sessionId,
+        violationType: opts.violationType,
+        severity: opts.severity,
+        reason: opts.reason,
+      }).catch(() => {});
+    } catch {}
+
+    return {
+      success: true,
+      ticketId,
+      eventId,
+      moderationStatus: newModStatus,
+      message: 'Moderasi Stranger Cam berhasil ditegakkan dan tiket admin telah dibuat.',
+    };
+  }
+
+  /**
+   * Get Stranger Cam moderation tickets for Admin Dashboard.
+   */
+  public static getAdminModerationTickets(status?: string): Array<{
+    ticketId: string;
+    userId: string;
+    userDisplayName: string;
+    moderationStatus: string;
+    sessionId: string;
+    violationType: string;
+    severity: string;
+    confidence: number;
+    automatedAction: string;
+    status: string;
+    createdAt: string;
+    internalNotes: string | null;
+    detectionMetadata: any;
+    moderationEventId?: string;
+  }> {
+    const db = getDatabase();
+
+    let query = `
+      SELECT
+        st.id as ticketId,
+        st.user_id as userId,
+        COALESCE(p.display_name, 'Stranger') as userDisplayName,
+        COALESCE(u.moderation_status, 'ACTIVE') as moderationStatus,
+        st.session_id as sessionId,
+        COALESCE(st.violation_type, 'UNKNOWN') as violationType,
+        st.priority as severity,
+        COALESCE(st.detection_confidence, 1.0) as confidence,
+        COALESCE(st.automated_action, 'TERMINATE_SESSION') as automatedAction,
+        st.status,
+        st.created_at as createdAt,
+        st.internal_notes as internalNotes,
+        st.detection_metadata as detectionMetadata,
+        st.moderation_event_id as moderationEventId
+      FROM support_tickets st
+      LEFT JOIN users u ON st.user_id = u.id
+      LEFT JOIN profiles p ON st.user_id = p.user_id
+      WHERE (st.category IN ('STRANGER_CAM_VIOLATION', 'SAFETY_REPORT') OR st.type = 'MODERATION' OR st.violation_type IS NOT NULL)
+    `;
+
+    const params: any[] = [];
+    if (status && status !== 'ALL') {
+      query += ' AND st.status = ?';
+      params.push(status);
+    }
+
+    query += ' ORDER BY st.created_at DESC LIMIT 100';
+
+    const rows = db.prepare(query).all(...params) as any[];
+
+    return rows.map((r) => {
+      let parsed = null;
+      try {
+        parsed = r.detectionMetadata ? JSON.parse(r.detectionMetadata) : null;
+      } catch {
+        parsed = r.detectionMetadata;
+      }
+      return {
+        ...r,
+        detectionMetadata: parsed,
+      };
+    });
+  }
+
+  /**
+   * Admin resolution of Stranger Cam moderation ticket.
+   * Actions: CONFIRMED, FALSE_POSITIVE, RESOLVED, UNDER_REVIEW, ESCALATED, BAN_USER
+   */
+  public static resolveModerationTicket(
+    ticketId: string,
+    action: 'CONFIRMED' | 'FALSE_POSITIVE' | 'RESOLVED' | 'UNDER_REVIEW' | 'ESCALATED' | 'BAN_USER',
+    adminId: string,
+    adminNotes?: string
+  ): { success: boolean; message: string } {
+    const db = getDatabase();
+
+    const ticket = db.prepare('SELECT * FROM support_tickets WHERE id = ?').get(ticketId) as any;
+    if (!ticket) {
+      throw new Error('Tiket moderasi tidak ditemukan.');
+    }
+
+    const userId = ticket.user_id;
+
+    if (action === 'FALSE_POSITIVE') {
+      // Restore user to active
+      db.prepare("UPDATE users SET moderation_status = 'ACTIVE', updated_at = datetime('now') WHERE id = ?").run(userId);
+      try {
+        db.prepare("UPDATE user_restrictions SET restriction_type = 'NONE', updated_at = datetime('now') WHERE user_id = ?").run(userId);
+      } catch {}
+      db.prepare(`
+        UPDATE support_tickets
+        SET status = 'RESOLVED',
+            assigned_admin_id = ?,
+            internal_notes = COALESCE(internal_notes, '') || '\n[ADMIN FALSE_POSITIVE]: ' || ?,
+            closed_at = datetime('now'),
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(adminId, adminNotes || 'Dinyatakan false positive oleh admin.', ticketId);
+
+      if (ticket.moderation_event_id) {
+        try {
+          db.prepare("UPDATE moderation_events SET review_status = 'DISMISSED_FALSE_POSITIVE', reviewed_by = ?, reviewed_at = datetime('now') WHERE id = ?")
+            .run(adminId, ticket.moderation_event_id);
+        } catch {}
+      }
+
+      // Audit Log
+      try {
+        db.prepare(`
+          INSERT INTO audit_logs (id, actor_id, actor_role, action, target_resource, target_id, details, created_at)
+          VALUES (?, ?, 'ADMIN', 'MODERATION_FALSE_POSITIVE_DISMISSED', 'SUPPORT_TICKET', ?, ?, datetime('now'))
+        `).run(uuidv4(), adminId, ticketId, JSON.stringify({ userId, adminNotes }));
+      } catch {}
+
+      return { success: true, message: 'Tiket ditandai False Positive. Pembatasan pengguna telah dicabut.' };
+    }
+
+    if (action === 'BAN_USER') {
+      db.prepare("UPDATE users SET status = 'BANNED', moderation_status = 'BANNED', updated_at = datetime('now') WHERE id = ?").run(userId);
+      try {
+        db.prepare("UPDATE user_restrictions SET restriction_type = 'BANNED', restricted_until = NULL, updated_at = datetime('now') WHERE user_id = ?").run(userId);
+      } catch {}
+      db.prepare(`
+        UPDATE support_tickets
+        SET status = 'RESOLVED',
+            assigned_admin_id = ?,
+            internal_notes = COALESCE(internal_notes, '') || '\n[ADMIN BANNED]: ' || ?,
+            closed_at = datetime('now'),
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(adminId, adminNotes || 'Pengguna diblokir permanen oleh admin.', ticketId);
+
+      // Audit Log
+      try {
+        db.prepare(`
+          INSERT INTO audit_logs (id, actor_id, actor_role, action, target_resource, target_id, details, created_at)
+          VALUES (?, ?, 'ADMIN', 'USER_BANNED_FROM_MODERATION', 'USER', ?, ?, datetime('now'))
+        `).run(uuidv4(), adminId, userId, JSON.stringify({ ticketId, adminNotes }));
+      } catch {}
+
+      return { success: true, message: 'Pengguna telah dibanned secara permanen.' };
+    }
+
+    if (action === 'CONFIRMED') {
+      db.prepare(`
+        UPDATE support_tickets
+        SET status = 'RESOLVED',
+            assigned_admin_id = ?,
+            internal_notes = COALESCE(internal_notes, '') || '\n[ADMIN CONFIRMED]: ' || ?,
+            closed_at = datetime('now'),
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(adminId, adminNotes || 'Pelanggaran dikonfirmasi oleh admin.', ticketId);
+
+      if (ticket.moderation_event_id) {
+        try {
+          db.prepare("UPDATE moderation_events SET review_status = 'CONFIRMED', reviewed_by = ?, reviewed_at = datetime('now') WHERE id = ?")
+            .run(adminId, ticket.moderation_event_id);
+        } catch {}
+      }
+
+      try {
+        db.prepare(`
+          INSERT INTO audit_logs (id, actor_id, actor_role, action, target_resource, target_id, details, created_at)
+          VALUES (?, ?, 'ADMIN', 'MODERATION_VIOLATION_CONFIRMED', 'SUPPORT_TICKET', ?, ?, datetime('now'))
+        `).run(uuidv4(), adminId, ticketId, JSON.stringify({ userId, adminNotes }));
+      } catch {}
+
+      return { success: true, message: 'Pelanggaran telah dikonfirmasi oleh admin.' };
+    }
+
+    if (action === 'UNDER_REVIEW') {
+      db.prepare(`
+        UPDATE support_tickets
+        SET status = 'IN_REVIEW',
+            assigned_admin_id = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(adminId, ticketId);
+
+      return { success: true, message: 'Status tiket diubah menjadi Under Review.' };
+    }
+
+    if (action === 'ESCALATED') {
+      db.prepare(`
+        UPDATE support_tickets
+        SET status = 'IN_REVIEW',
+            priority = 'URGENT',
+            assigned_admin_id = ?,
+            internal_notes = COALESCE(internal_notes, '') || '\n[ESCALATED]: Ditandai URGENT oleh ' || ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(adminId, adminId, ticketId);
+
+      return { success: true, message: 'Tiket berhasil dieskalasi ke tingkat URGENT.' };
+    }
+
+    // Default RESOLVED
+    db.prepare(`
+      UPDATE support_tickets
+      SET status = 'RESOLVED',
+          assigned_admin_id = ?,
+          closed_at = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(adminId, ticketId);
+
+    return { success: true, message: 'Tiket moderasi telah diselesaikan.' };
+  }
+
+  /**
+   * Get production database metrics for Stranger Cam.
+   * Strictly genuine database queries — NO fake counters!
+   */
+  public static getDatabaseStats(): {
+    usersOnline: number;
+    usersSearching: number;
+    activeSessions: number;
+    completedSessions: number;
+    activeModerationCases: number;
+    totalModerationCases: number;
+  } {
+    const db = getDatabase();
+
+    const onlineRow = db.prepare(`
+      SELECT COUNT(DISTINCT uid) as count FROM (
+        SELECT user_id as uid FROM stranger_presence WHERE last_heartbeat >= datetime('now', '-60 seconds')
+        UNION
+        SELECT user_id as uid FROM stranger_queue
+        UNION
+        SELECT user_a_id as uid FROM stranger_sessions WHERE status IN ('MATCHING', 'CONNECTED')
+        UNION
+        SELECT user_b_id as uid FROM stranger_sessions WHERE status IN ('MATCHING', 'CONNECTED')
+      )
+    `).get() as { count: number } | undefined;
+
+    const queueRow = db.prepare('SELECT COUNT(*) as count FROM stranger_queue').get() as { count: number } | undefined;
+    const activeRow = db.prepare("SELECT COUNT(*) as count FROM stranger_sessions WHERE status = 'CONNECTED'").get() as { count: number } | undefined;
+    const completedRow = db.prepare("SELECT COUNT(*) as count FROM stranger_sessions WHERE status IN ('ENDED', 'SKIPPED')").get() as { count: number } | undefined;
+    const activeModRow = db.prepare("SELECT COUNT(*) as count FROM support_tickets WHERE (category IN ('SAFETY_REPORT', 'STRANGER_CAM_VIOLATION') OR violation_type IS NOT NULL) AND status IN ('OPEN', 'IN_REVIEW', 'WAITING')").get() as { count: number } | undefined;
+    const totalModRow = db.prepare("SELECT COUNT(*) as count FROM support_tickets WHERE (category IN ('SAFETY_REPORT', 'STRANGER_CAM_VIOLATION') OR violation_type IS NOT NULL)").get() as { count: number } | undefined;
+
+    return {
+      usersOnline: Number(onlineRow?.count || 0),
+      usersSearching: Number(queueRow?.count || 0),
+      activeSessions: Number(activeRow?.count || 0),
+      completedSessions: Number(completedRow?.count || 0),
+      activeModerationCases: Number(activeModRow?.count || 0),
+      totalModerationCases: Number(totalModRow?.count || 0),
+    };
   }
 }

@@ -55,19 +55,14 @@ export class MatchingService {
 
     if (!user) return 10;
 
-    // 1. Premium tier grants 50 likes/day in Telegram ecosystem (Paket NIVA 1 & 2)
-    if (user.subscription_status === 'PREMIUM_ACTIVE') {
+    // 1. Student KTM Verified grants 50 likes/day (Cases C, D, E)
+    if (user.verification_status === 'KTM_VERIFIED') {
       return 50;
     }
-
-    // 2. Photo + Student KTM Verified grants 30 likes/day
-    if (user.verification_status === 'KTM_VERIFIED') {
-      return 30;
-    }
     const ktm = db.prepare("SELECT status FROM student_verifications WHERE user_id = ? AND status = 'VERIFIED'").get(userId);
-    if (ktm) return 30;
+    if (ktm) return 50;
 
-    // 3. Photo-only verification or Unverified: 10 likes/day
+    // 2. Photo-only verification or Unverified (even if Premium): 10 likes/day (Cases A, B, F)
     return 10;
   }
 

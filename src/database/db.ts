@@ -436,6 +436,19 @@ export function initDatabase(customPath?: string): void {
     )`,
     "CREATE INDEX IF NOT EXISTS idx_ad_inquiries_status ON advertising_inquiries(status)",
     "CREATE INDEX IF NOT EXISTS idx_ad_inquiries_created ON advertising_inquiries(created_at DESC)",
+    // Stranger Cam Moderation & Enforcement Hardening
+    "ALTER TABLE users ADD COLUMN moderation_status TEXT NOT NULL DEFAULT 'ACTIVE'",
+    "ALTER TABLE support_tickets ADD COLUMN session_id TEXT",
+    "ALTER TABLE support_tickets ADD COLUMN moderation_event_id TEXT",
+    "ALTER TABLE support_tickets ADD COLUMN violation_type TEXT",
+    "ALTER TABLE support_tickets ADD COLUMN detection_confidence REAL",
+    "ALTER TABLE support_tickets ADD COLUMN automated_action TEXT",
+    "ALTER TABLE support_tickets ADD COLUMN detection_metadata TEXT",
+    "ALTER TABLE moderation_events ADD COLUMN ticket_id TEXT",
+    "ALTER TABLE moderation_events ADD COLUMN detection_metadata TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_users_moderation_status ON users(moderation_status)",
+    "CREATE INDEX IF NOT EXISTS idx_support_tickets_session ON support_tickets(session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_support_tickets_mod_event ON support_tickets(moderation_event_id)",
   ];
 
   for (const sql of migrations) {
@@ -570,7 +583,11 @@ export function initDatabase(customPath?: string): void {
 
 export function applyEssentialMigrations(db: DatabaseSync): void {
   // 1. Ensure support_tickets columns
-  const ticketCols = ['environment', 'category', 'access_token', 'contact_name', 'contact_email', 'type', 'assigned_admin_id', 'internal_notes', 'closed_at'];
+  const ticketCols = [
+    'environment', 'category', 'access_token', 'contact_name', 'contact_email', 'type',
+    'assigned_admin_id', 'internal_notes', 'closed_at', 'session_id', 'moderation_event_id',
+    'violation_type', 'detection_confidence', 'automated_action', 'detection_metadata'
+  ];
   for (const col of ticketCols) {
     try {
       if (col === 'environment') {
@@ -585,6 +602,19 @@ export function applyEssentialMigrations(db: DatabaseSync): void {
     } catch {
       // Column might already exist
     }
+  }
+
+  // Ensure users.moderation_status
+  try {
+    db.exec("ALTER TABLE users ADD COLUMN moderation_status TEXT NOT NULL DEFAULT 'ACTIVE'");
+  } catch {}
+
+  // Ensure moderation_events columns
+  const modCols = ['ticket_id', 'detection_metadata'];
+  for (const col of modCols) {
+    try {
+      db.exec(`ALTER TABLE moderation_events ADD COLUMN ${col} TEXT`);
+    } catch {}
   }
 
   // 2. Ensure AI Support Tables

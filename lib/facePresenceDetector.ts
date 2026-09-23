@@ -8,13 +8,80 @@
  *  - NO facial recognition, NO biometric vectors, NO identity extraction.
  */
 
-export type FacePresenceStatus = 'FACE_PRESENT' | 'FACE_MISSING' | 'MULTIPLE_FACES';
+export type FacePresenceStatus = 'FACE_PRESENT' | 'FACE_NOT_PRESENT' | 'FACE_MISSING' | 'MULTIPLE_FACES' | 'UNKNOWN';
 
 export interface FacePresenceResult {
   status: FacePresenceStatus;
   faceCount: number;
   confidence: number;
   isLowLight: boolean;
+  rawSkinRatio?: number;
+}
+
+/**
+ * Debounce & Grace Period Tracker for client-side face presence enforcement.
+ * Prevents false positives caused by:
+ * - user blinking
+ * - bad/fluctuating indoor lighting
+ * - momentary turn/head tilt outside frame (< grace period)
+ * - temporary camera blur or network frame drop
+ */
+export class FacePresenceDebouncer {
+  private missingSince: number | null = null;
+  private consecutiveMissingTicks = 0;
+  private readonly gracePeriodMs: number;
+
+  constructor(gracePeriodSeconds = 6) {
+    this.gracePeriodMs = gracePeriodSeconds * 1000;
+  }
+
+  public update(result: FacePresenceResult): {
+    state: 'STABLE_PRESENT' | 'IN_GRACE_PERIOD' | 'ENFORCEMENT_REQUIRED';
+    missingDurationMs: number;
+    remainingGraceSeconds: number;
+  } {
+    const isPresent = result.status === 'FACE_PRESENT';
+
+    if (isPresent) {
+      this.missingSince = null;
+      this.consecutiveMissingTicks = 0;
+      return {
+        state: 'STABLE_PRESENT',
+        missingDurationMs: 0,
+        remainingGraceSeconds: Math.ceil(this.gracePeriodMs / 1000),
+      };
+    }
+
+    // Face is not present or unknown
+    const now = Date.now();
+    if (!this.missingSince) {
+      this.missingSince = now;
+    }
+
+    this.consecutiveMissingTicks++;
+    const missingDurationMs = now - this.missingSince;
+    const remainingMs = Math.max(0, this.gracePeriodMs - missingDurationMs);
+    const remainingGraceSeconds = Math.ceil(remainingMs / 1000);
+
+    if (missingDurationMs >= this.gracePeriodMs && this.consecutiveMissingTicks >= 3) {
+      return {
+        state: 'ENFORCEMENT_REQUIRED',
+        missingDurationMs,
+        remainingGraceSeconds: 0,
+      };
+    }
+
+    return {
+      state: 'IN_GRACE_PERIOD',
+      missingDurationMs,
+      remainingGraceSeconds,
+    };
+  }
+
+  public reset(): void {
+    this.missingSince = null;
+    this.consecutiveMissingTicks = 0;
+  }
 }
 
 // Reusable offscreen canvas for performance and low memory footprint on mobile

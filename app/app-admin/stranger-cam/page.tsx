@@ -23,6 +23,10 @@ interface Stats {
   totalReports: number;
   pendingReports: number;
   bannedOrBlockedCount: number;
+  usersOnline?: number;
+  usersSearching?: number;
+  completedSessions?: number;
+  activeModerationCases?: number;
 }
 
 interface LiveSession {
@@ -32,6 +36,29 @@ interface LiveSession {
   userAAnonId: string;
   userBAnonId: string;
   region: string;
+}
+
+interface ModerationTicket {
+  id: string;
+  ticketId: string;
+  userId: string;
+  userDisplayName: string | null;
+  userHandle: string | null;
+  sessionId: string | null;
+  moderationEventId: string | null;
+  violationType: string | null;
+  severity: string | null;
+  detectionConfidence: number | null;
+  automatedAction: string | null;
+  detectionMetadata: any;
+  status: string;
+  priority: string;
+  subject: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+  userModerationStatus: string | null;
+  userStatus: string | null;
 }
 
 interface ReportItem {
@@ -56,14 +83,17 @@ interface SafetyEvent {
 }
 
 export default function AdminStrangerCamPage() {
-  const [tab, setTab] = useState<'LIVE' | 'REPORTS' | 'EVENTS' | 'HEALTH'>('LIVE');
+  const [tab, setTab] = useState<'LIVE' | 'MODERATION' | 'REPORTS' | 'EVENTS' | 'HEALTH'>('MODERATION');
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Stats | null>(null);
   const [liveSessions, setLiveSessions] = useState<LiveSession[]>([]);
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [safetyEvents, setSafetyEvents] = useState<SafetyEvent[]>([]);
+  const [moderationTickets, setModerationTickets] = useState<ModerationTicket[]>([]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [filterReason, setFilterReason] = useState<string>('ALL');
+  const [ticketStatusFilter, setTicketStatusFilter] = useState<string>('ALL');
+  const [ticketViolationFilter, setTicketViolationFilter] = useState<string>('ALL');
 
   const fetchData = async () => {
     setLoading(true);
@@ -75,6 +105,7 @@ export default function AdminStrangerCamPage() {
         setLiveSessions(data.liveSessions || []);
         setReports(data.reports || []);
         setSafetyEvents(data.safetyEvents || []);
+        setModerationTickets(data.moderationTickets || []);
       }
     } catch {
       // Ignore
@@ -88,6 +119,35 @@ export default function AdminStrangerCamPage() {
     const interval = setInterval(fetchData, 10000); // 10s auto-refresh
     return () => clearInterval(interval);
   }, []);
+
+  const handleResolveTicket = async (ticketId: string, action: 'CONFIRMED' | 'FALSE_POSITIVE' | 'RESOLVED' | 'UNDER_REVIEW' | 'ESCALATED' | 'BAN_USER') => {
+    if (action === 'BAN_USER' && !confirm('PERINGATAN: Apakah Anda yakin ingin memblokir permanen (BANNED) pengguna ini dari sistem NIVA?')) {
+      return;
+    }
+    if (action === 'FALSE_POSITIVE' && !confirm('Pulihkan status pengguna? Pembatasan/restriksi pengguna akan dicabut dan status dikembalikan ke ACTIVE.')) {
+      return;
+    }
+
+    setActionLoading(ticketId);
+    try {
+      const res = await fetch('/api/admin/stranger-cam', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId, action, adminNotes: `Action ${action} diproses via Admin Dashboard console` }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(data.message || 'Tiket moderasi berhasil diproses.');
+        fetchData();
+      } else {
+        alert('Gagal: ' + data.message);
+      }
+    } catch (err: any) {
+      alert('Terjadi kesalahan: ' + err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   const handleResolveReport = async (reportId: string, action: 'RESOLVED' | 'DISMISSED' | 'BAN_USER') => {
     if (action === 'BAN_USER' && !confirm('Apakah Anda yakin ingin MEMBLOKIR / BAN pengguna ini secara permanen dari NIVA?')) {
@@ -168,43 +228,54 @@ export default function AdminStrangerCamPage() {
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div className="p-4 rounded-2xl bg-[#171420] border border-[#2B2438] space-y-1">
-          <div className="text-[11px] text-[#9D93A8]">Live Calls Now</div>
+          <div className="text-[11px] text-[#9D93A8]">Active Cam Sessions</div>
           <div className="text-2xl font-display font-extrabold text-emerald-400">
             {stats?.activeSessions ?? 0}
           </div>
         </div>
 
         <div className="p-4 rounded-2xl bg-[#171420] border border-[#2B2438] space-y-1">
-          <div className="text-[11px] text-[#9D93A8]">Pending Reports</div>
-          <div className="text-2xl font-display font-extrabold text-amber-400">
-            {stats?.pendingReports ?? 0}
-          </div>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-[#171420] border border-[#2B2438] space-y-1">
-          <div className="text-[11px] text-[#9D93A8]">Total Reports</div>
-          <div className="text-2xl font-display font-extrabold text-white">
-            {stats?.totalReports ?? 0}
-          </div>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-[#171420] border border-[#2B2438] space-y-1">
-          <div className="text-[11px] text-[#9D93A8]">Blocked Users</div>
+          <div className="text-[11px] text-[#9D93A8]">Moderation Cases (DB)</div>
           <div className="text-2xl font-display font-extrabold text-rose-400">
-            {stats?.bannedOrBlockedCount ?? 0}
+            {stats?.activeModerationCases ?? moderationTickets.filter(t => ['OPEN', 'NEW', 'UNDER_REVIEW'].includes(t.status)).length}
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-[#171420] border border-[#2B2438] space-y-1 col-span-2 md:col-span-1">
-          <div className="text-[11px] text-[#9D93A8]">Waitlist Signups</div>
+        <div className="p-4 rounded-2xl bg-[#171420] border border-[#2B2438] space-y-1">
+          <div className="text-[11px] text-[#9D93A8]">Online / Queue</div>
           <div className="text-2xl font-display font-extrabold text-[#E8B4C8]">
-            {stats?.waitlistCount ?? 0}
+            {stats?.usersOnline ?? 0} <span className="text-xs text-[#9D93A8] font-normal">/ {stats?.usersSearching ?? 0}</span>
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-[#171420] border border-[#2B2438] space-y-1">
+          <div className="text-[11px] text-[#9D93A8]">Completed Sessions</div>
+          <div className="text-2xl font-display font-extrabold text-blue-400">
+            {stats?.completedSessions ?? 0}
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-[#171420] border border-[#2B2438] space-y-1">
+          <div className="text-[11px] text-[#9D93A8]">Blocked / Restricted</div>
+          <div className="text-2xl font-display font-extrabold text-amber-400">
+            {stats?.bannedOrBlockedCount ?? 0}
           </div>
         </div>
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex items-center gap-2 border-b border-[#2B2438] pb-2 text-xs font-semibold">
+      <div className="flex items-center gap-2 border-b border-[#2B2438] pb-2 text-xs font-semibold overflow-x-auto">
+        <button
+          onClick={() => setTab('MODERATION')}
+          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 ${
+            tab === 'MODERATION'
+              ? 'bg-[#5B3A6D] text-white'
+              : 'text-[#9D93A8] hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+          <span>Moderation Tickets ({moderationTickets.length})</span>
+        </button>
         <button
           onClick={() => setTab('LIVE')}
           className={`px-4 py-2 rounded-xl transition-all ${
@@ -246,6 +317,222 @@ export default function AdminStrangerCamPage() {
           System Health & Config
         </button>
       </div>
+
+      {/* ── TAB: MODERATION TICKETS (Production Enforcement Queue) ──────── */}
+      {tab === 'MODERATION' && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-[#171420] border border-[#2B2438]">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2 text-xs text-[#9D93A8]">
+                <Filter className="w-3.5 h-3.5" />
+                <span>Status:</span>
+                <select
+                  value={ticketStatusFilter}
+                  onChange={(e) => setTicketStatusFilter(e.target.value)}
+                  className="px-2.5 py-1 rounded-lg bg-black/40 border border-[#2B2438] text-xs text-white focus:outline-none"
+                >
+                  <option value="ALL">Semua Status</option>
+                  <option value="OPEN">OPEN / NEW</option>
+                  <option value="UNDER_REVIEW">UNDER_REVIEW</option>
+                  <option value="CONFIRMED">CONFIRMED</option>
+                  <option value="FALSE_POSITIVE">FALSE_POSITIVE</option>
+                  <option value="RESOLVED">RESOLVED</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-[#9D93A8]">
+                <span>Pelanggaran:</span>
+                <select
+                  value={ticketViolationFilter}
+                  onChange={(e) => setTicketViolationFilter(e.target.value)}
+                  className="px-2.5 py-1 rounded-lg bg-black/40 border border-[#2B2438] text-xs text-white focus:outline-none"
+                >
+                  <option value="ALL">Semua Pelanggaran</option>
+                  <option value="EXPLICIT_BEHAVIOR_OR_NUDITY">EXPLICIT BEHAVIOR / NUDITY</option>
+                  <option value="FACE_ABSENT_TIMEOUT">FACE ABSENT TIMEOUT</option>
+                  <option value="HARASSMENT">HARASSMENT</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-[#9D93A8]">
+              Automated Computer Vision & Face Presence Enforcement Records
+            </div>
+          </div>
+
+          {(() => {
+            const filteredTickets = moderationTickets.filter((t) => {
+              if (ticketStatusFilter !== 'ALL') {
+                if (ticketStatusFilter === 'OPEN' && !['OPEN', 'NEW'].includes(t.status)) return false;
+                if (ticketStatusFilter !== 'OPEN' && t.status !== ticketStatusFilter) return false;
+              }
+              if (ticketViolationFilter !== 'ALL' && t.violationType !== ticketViolationFilter) {
+                return false;
+              }
+              return true;
+            });
+
+            if (filteredTickets.length === 0) {
+              return (
+                <div className="p-12 text-center rounded-2xl bg-[#171420] border border-[#2B2438] text-xs text-[#9D93A8] space-y-2">
+                  <CheckCircle2 className="w-8 h-8 mx-auto opacity-40 text-emerald-400" />
+                  <div>Tidak ada tiket moderasi Stranger Cam pada filter ini.</div>
+                  <div className="text-[11px] text-[#68626D]">Pelanggaran kamera otomatis akan tercatat di sini secara real-time.</div>
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-3">
+                {filteredTickets.map((t) => (
+                  <div
+                    key={t.id}
+                    className="p-5 rounded-2xl bg-[#171420] border border-[#2B2438] space-y-3 hover:border-[#5B3A6D]/40 transition-colors"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-sm font-bold text-white tracking-wider">
+                          {t.ticketId}
+                        </span>
+                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                          t.violationType?.includes('EXPLICIT')
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                            : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        }`}>
+                          {t.violationType || 'VIOLATION'}
+                        </span>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white/5 text-[#9D93A8]">
+                          Sev: {t.severity || 'HIGH'}
+                        </span>
+                        {t.detectionConfidence && (
+                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            Conf: {Math.round(t.detectionConfidence * 100)}%
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+                          ['OPEN', 'NEW'].includes(t.status)
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/30 animate-pulse'
+                            : t.status === 'UNDER_REVIEW'
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                            : t.status === 'CONFIRMED'
+                            ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                            : t.status === 'FALSE_POSITIVE'
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                            : 'bg-white/10 text-gray-400 border-white/10'
+                        }`}>
+                          {t.status}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 p-3 rounded-xl bg-black/30 text-xs border border-white/5">
+                      <div>
+                        <span className="text-[10px] text-[#9D93A8] block">Pelaku / Target User</span>
+                        <span className="font-semibold text-white">
+                          {t.userDisplayName || 'Anonymous User'}
+                        </span>
+                        <div className="font-mono text-[11px] text-[#9D93A8] truncate">
+                          {t.userId}
+                        </div>
+                        <div className="mt-1">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                            t.userModerationStatus === 'RESTRICTED'
+                              ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                              : t.userModerationStatus === 'ACTIVE'
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                              : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          }`}>
+                            Status: {t.userModerationStatus || 'UNKNOWN'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] text-[#9D93A8] block">Sesi Cam Terkait</span>
+                        <span className="font-mono text-white text-[11px] block truncate">
+                          {t.sessionId || 'Tidak tercatat'}
+                        </span>
+                        <span className="text-[10px] text-[#9D93A8] block mt-1">Tindakan Otomatis:</span>
+                        <span className="text-[11px] text-amber-300 font-mono">
+                          {t.automatedAction || 'CAMERA_DISABLED'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] text-[#9D93A8] block">Subjek & Catatan</span>
+                        <p className="text-gray-300 text-xs line-clamp-2">
+                          {t.subject}
+                        </p>
+                        <span className="text-[10px] text-[#9D93A8] block mt-1">
+                          {new Date(t.createdAt).toLocaleString('id-ID')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {t.detectionMetadata && (
+                      <details className="text-xs text-[#9D93A8] bg-black/20 p-2.5 rounded-lg border border-white/5">
+                        <summary className="cursor-pointer font-semibold text-gray-300 hover:text-white">
+                          Metadata Bukti Telemetri Otomatis (JSON)
+                        </summary>
+                        <pre className="mt-2 text-[10px] font-mono text-gray-400 overflow-x-auto p-2 rounded bg-black/40">
+                          {JSON.stringify(t.detectionMetadata, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs">
+                      <span className="text-[11px] text-[#9D93A8] flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        Terdaftar: {new Date(t.createdAt).toLocaleString('id-ID')}
+                      </span>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {t.status !== 'FALSE_POSITIVE' && (
+                          <button
+                            onClick={() => handleResolveTicket(t.ticketId, 'FALSE_POSITIVE')}
+                            disabled={actionLoading === t.ticketId}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-semibold transition-colors"
+                          >
+                            Tolak (False Positive & Buka Restriksi)
+                          </button>
+                        )}
+                        {t.status !== 'CONFIRMED' && (
+                          <button
+                            onClick={() => handleResolveTicket(t.ticketId, 'CONFIRMED')}
+                            disabled={actionLoading === t.ticketId}
+                            className="px-3 py-1.5 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 font-semibold transition-colors"
+                          >
+                            Konfirmasi Pelanggaran
+                          </button>
+                        )}
+                        {t.status !== 'RESOLVED' && (
+                          <button
+                            onClick={() => handleResolveTicket(t.ticketId, 'RESOLVED')}
+                            disabled={actionLoading === t.ticketId}
+                            className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 transition-colors"
+                          >
+                            Selesaikan (Resolve)
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleResolveTicket(t.ticketId, 'BAN_USER')}
+                          disabled={actionLoading === t.ticketId}
+                          className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold transition-colors"
+                        >
+                          Ban Permanen
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* ── TAB 1: LIVE SESSIONS ────────────────────────────────────────── */}
       {tab === 'LIVE' && (
