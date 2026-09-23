@@ -15,29 +15,18 @@ export interface AIResponse {
   isFallback: boolean;
 }
 
+import { ServerlessRateLimiter } from '../security/serverlessRateLimiter';
+
 export class AISupportService {
   private static readonly RATE_LIMIT_WINDOW_MS = 60 * 1000;
   private static readonly MAX_REQUESTS_PER_WINDOW = 15;
-  private static rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
   /**
-   * Rate limiting per IP
+   * Rate limiting per IP (Persistent across Serverless Lambda)
    */
   public static checkRateLimit(ip: string): boolean {
-    const now = Date.now();
-    const entry = this.rateLimitMap.get(ip);
-
-    if (!entry || now > entry.resetAt) {
-      this.rateLimitMap.set(ip, { count: 1, resetAt: now + this.RATE_LIMIT_WINDOW_MS });
-      return true;
-    }
-
-    if (entry.count >= this.MAX_REQUESTS_PER_WINDOW) {
-      return false;
-    }
-
-    entry.count += 1;
-    return true;
+    const res = ServerlessRateLimiter.checkLimit(`ai_support:${ip}`, this.MAX_REQUESTS_PER_WINDOW, 60);
+    return res.allowed;
   }
 
   /**

@@ -276,6 +276,33 @@ export class NotifyService {
     await this.sendTelegramMessage(this.adminBotToken, chatId, message, keyboard, 'STRANGER_CAM_MODERATION', details.userId);
   }
 
+  /**
+   * Send internal operational system alert to NotifyNIVABot
+   */
+  public static async notifySystemAlert(
+    title: string,
+    details: string,
+    severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'HIGH'
+  ): Promise<void> {
+    const chatId = this.getAdminChatId();
+    const eventId = `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    if (!config.NOTIFY_NIVA_ENABLED || !this.adminBotToken || !chatId) {
+      this.recordNotificationEvent(eventId, 'SYSTEM_ALERT', 'system', 'SENT');
+      return;
+    }
+
+    const message = [
+      `⚠️ *SYSTEM ALERT [${severity}]*`,
+      '',
+      `📌 *${this.escapeMarkdown(title)}*`,
+      `📝 ${this.escapeMarkdown(details)}`,
+      `📅 ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB`,
+    ].join('\n');
+
+    await this.sendTelegramMessage(this.adminBotToken, chatId, message, undefined, 'SYSTEM_ALERT', 'system');
+  }
+
   // ── 2. User Outbound Notifications (NIVASocial @nivasocialmakingbot) ───────
 
   /**

@@ -24,6 +24,8 @@ import { TelegramService } from '../services/telegram/telegramService';
 import { NotifyService } from '../services/notification/notifyService';
 import { BotMatchmakingService } from '../services/matchmaking/botMatchmakingService';
 import { PremiumService } from '../services/premium/premiumService';
+import { createSqliteSessionStorage } from './telegramSessionStorage';
+import { ServerlessRateLimiter } from '../services/security/serverlessRateLimiter';
 
 export interface SessionData {
   step:
@@ -63,29 +65,22 @@ export function createBot(): Bot<MyContext> {
     console.error(`Error while handling update ${ctx.update.update_id}:`, err.error);
   });
 
-  // Session storage middleware
+  // Session storage middleware (Persistent SQLite adapter for Serverless Vercel)
   bot.use(
     session({
       initial: (): SessionData => ({ step: 'IDLE' }),
+      storage: createSqliteSessionStorage<SessionData>(),
     })
   );
 
-  // Global Anti-Spam / Rate Limiting Middleware
-  const userRateMap = new Map<number, { count: number; lastReset: number }>();
+  // Global Anti-Spam / Rate Limiting Middleware (Persistent serverless rate limiting)
   bot.use(async (ctx, next) => {
     const fromId = ctx.from?.id;
     if (fromId) {
-      const now = Date.now();
-      const userRate = userRateMap.get(fromId) || { count: 0, lastReset: now };
-      if (now - userRate.lastReset > 60000) {
-        userRate.count = 1;
-        userRate.lastReset = now;
-      } else {
-        userRate.count++;
-      }
-      userRateMap.set(fromId, userRate);
+      const rateLimitKey = `tg_bot:${fromId}`;
+      const rateCheck = ServerlessRateLimiter.checkLimit(rateLimitKey, 45, 60);
 
-      if (userRate.count > 45) {
+      if (!rateCheck.allowed) {
         await ctx.reply('⚠️ Anda mengirim pesan terlalu cepat. Silakan tunggu 1 menit.');
         return;
       }

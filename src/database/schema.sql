@@ -867,3 +867,28 @@ CREATE TABLE IF NOT EXISTS notification_queue (
     sent_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_nq_status ON notification_queue(status, created_at);
+
+-- 50. Telegram Sessions (Persistent Grammy session storage for Serverless Lambda)
+CREATE TABLE IF NOT EXISTS telegram_sessions (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_telegram_sessions_updated ON telegram_sessions(updated_at);
+
+-- 51. Telegram Processed Updates (Webhook Idempotency Tracking)
+CREATE TABLE IF NOT EXISTS telegram_processed_updates (
+    update_id INTEGER PRIMARY KEY,
+    bot_type TEXT NOT NULL DEFAULT 'USER',
+    processed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_telegram_proc_updates_time ON telegram_processed_updates(processed_at);
+
+-- 52. Serverless Rate Limits (Persistent Rate Limiting across Lambda instances)
+CREATE TABLE IF NOT EXISTS serverless_rate_limits (
+    key TEXT PRIMARY KEY,
+    count INTEGER NOT NULL DEFAULT 1,
+    reset_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_srl_reset ON serverless_rate_limits(reset_at);

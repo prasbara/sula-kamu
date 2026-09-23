@@ -449,6 +449,75 @@ export function initDatabase(customPath?: string): void {
     "CREATE INDEX IF NOT EXISTS idx_users_moderation_status ON users(moderation_status)",
     "CREATE INDEX IF NOT EXISTS idx_support_tickets_session ON support_tickets(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_support_tickets_mod_event ON support_tickets(moderation_event_id)",
+    // Serverless Production Hardening migrations (Vercel)
+    `CREATE TABLE IF NOT EXISTS telegram_sessions (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS telegram_processed_updates (
+      update_id INTEGER PRIMARY KEY,
+      bot_type TEXT NOT NULL DEFAULT 'USER',
+      processed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS serverless_rate_limits (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL DEFAULT 1,
+      reset_at INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS match_queue (
+      id TEXT PRIMARY KEY,
+      user_id TEXT UNIQUE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'SEARCHING' CHECK(status IN ('SEARCHING', 'MATCHED', 'CANCELLED')),
+      entered_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_heartbeat TEXT NOT NULL DEFAULT (datetime('now')),
+      metadata TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS match_sessions (
+      id TEXT PRIMARY KEY,
+      user_a_id TEXT NOT NULL,
+      user_b_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'COMPLETED', 'USER_ENDED', 'OFFLINE_TIMEOUT', 'REPORTED', 'BLOCKED')),
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      ended_at TEXT,
+      ended_reason TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(user_a_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(user_b_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS match_session_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      sender_user_id TEXT NOT NULL,
+      receiver_user_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(session_id) REFERENCES match_sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY(sender_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(receiver_user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS notification_queue (
+      id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'SENT', 'FAILED', 'RETRY')),
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      sent_at TEXT
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_telegram_sessions_updated ON telegram_sessions(updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_telegram_proc_updates_time ON telegram_processed_updates(processed_at)",
+    "CREATE INDEX IF NOT EXISTS idx_srl_reset ON serverless_rate_limits(reset_at)",
+    "CREATE INDEX IF NOT EXISTS idx_ms_expiry ON match_sessions(expires_at, status)",
+    "CREATE INDEX IF NOT EXISTS idx_ms_users ON match_sessions(user_a_id, user_b_id)",
+    "CREATE INDEX IF NOT EXISTS idx_mq_status_time ON match_queue(status, entered_at)",
+    "CREATE INDEX IF NOT EXISTS idx_mq_heartbeat ON match_queue(last_heartbeat)",
+    "CREATE INDEX IF NOT EXISTS idx_nq_status ON notification_queue(status, created_at)",
   ];
 
   for (const sql of migrations) {
@@ -919,6 +988,33 @@ export function applyEssentialMigrations(db: DatabaseSync): void {
       `);
     } catch (e) {
       console.warn('system tables and reviews migration warning:', e);
+    }
+
+    // 8. Ensure Serverless Production Hardening Tables (Vercel)
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS telegram_sessions (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS telegram_processed_updates (
+          update_id INTEGER PRIMARY KEY,
+          bot_type TEXT NOT NULL DEFAULT 'USER',
+          processed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS serverless_rate_limits (
+          key TEXT PRIMARY KEY,
+          count INTEGER NOT NULL DEFAULT 1,
+          reset_at INTEGER NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_telegram_sessions_updated ON telegram_sessions(updated_at);
+        CREATE INDEX IF NOT EXISTS idx_telegram_proc_updates_time ON telegram_processed_updates(processed_at);
+        CREATE INDEX IF NOT EXISTS idx_srl_reset ON serverless_rate_limits(reset_at);
+      `);
+    } catch (e) {
+      console.warn('serverless hardening tables migration warning:', e);
     }
 }
 
